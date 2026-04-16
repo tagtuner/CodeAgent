@@ -74,13 +74,36 @@ def create_app(
         _sessions[s.id] = s
         return {"session_id": s.id}
 
+    @app.get("/api/session/{session_id}")
+    async def get_session(session_id: str):
+        session_dir = config.session.get("dir", "/opt/codeagent/sessions")
+        session_file = Path(session_dir) / f"{session_id}.json"
+        if not session_file.exists():
+            return JSONResponse({"error": "Session not found"}, status_code=404)
+        data = json.loads(session_file.read_text())
+        return {"id": data["id"], "messages": data.get("messages", [])}
+
+    @app.delete("/api/session/{session_id}")
+    async def delete_session(session_id: str):
+        session_dir = config.session.get("dir", "/opt/codeagent/sessions")
+        session_file = Path(session_dir) / f"{session_id}.json"
+        if session_file.exists():
+            session_file.unlink()
+        _sessions.pop(session_id, None)
+        return {"status": "deleted", "id": session_id}
+
     @app.websocket("/ws/{session_id}")
     async def ws_chat(websocket: WebSocket, session_id: str):
         await websocket.accept()
         session = _sessions.get(session_id)
         if not session:
             max_tok = config.session.get("max_history_tokens", 12000)
-            session = Session(session_id=session_id, max_history_tokens=max_tok)
+            session_dir = config.session.get("dir", "/opt/codeagent/sessions")
+            session_file = Path(session_dir) / f"{session_id}.json"
+            if session_file.exists():
+                session = Session.load(str(session_file), max_history_tokens=max_tok)
+            else:
+                session = Session(session_id=session_id, max_history_tokens=max_tok)
             _sessions[session_id] = session
 
         agent = Agent(
