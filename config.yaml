@@ -1,0 +1,73 @@
+models:
+  main:
+    url: http://127.0.0.1:8080/v1
+    name: qwen2.5-coder-14b
+    ctx_size: 16384
+    max_output: 4096
+  fast:
+    url: http://127.0.0.1:8090/v1
+    name: qwen2.5-1.5b
+    ctx_size: 8192
+    max_output: 512
+
+router:
+  model: fast
+  categories:
+    - simple
+    - coding
+    - ebs
+    - system
+
+tools:
+  bash:
+    enabled: true
+    timeout: 120
+    blocked_commands:
+      - "rm -rf /"
+      - shutdown
+      - reboot
+      - "mkfs"
+      - "dd if="
+  file_ops:
+    enabled: true
+    allowed_dirs:
+      - /opt
+      - /home
+      - /root
+      - /tmp
+      - /var
+      - /etc
+  git:
+    enabled: true
+  oracle:
+    enabled: true
+    default_host: ""
+    default_port: "1521"
+    default_service: ""
+  ebs:
+    enabled: true
+
+mcp_servers: []
+
+skills_dir: /opt/codeagent/skills/library
+
+web:
+  host: 0.0.0.0
+  port: 4200
+
+permissions:
+  bash: allow
+  file_write: allow
+  file_read: allow
+  oracle_query: allow
+  dangerous_commands: ask
+
+session:
+  dir: /opt/codeagent/sessions
+  max_history_tokens: 12000
+
+agent:
+  max_iterations: 10
+  repeat_penalty: 1.15
+  temperature: 0.7
+  top_p: 0.9
