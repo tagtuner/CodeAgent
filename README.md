@@ -29,6 +29,74 @@ User Message
   → Final response displayed with token stats
 ```
 
+## Hardware Requirements
+
+CodeAgent runs entirely on **CPU** — no GPU required. Tested and working on:
+
+### Minimum (for 14B + 1.5B models)
+
+| Component | Minimum | Recommended |
+|---|---|---|
+| CPU | 4 cores / 4 threads | 8+ cores (Xeon / Ryzen) |
+| RAM | 16 GB | 32 GB |
+| Disk | 20 GB free | 50 GB+ |
+| GPU | Not required | Optional (CUDA/ROCm for faster inference) |
+| OS | Linux (Ubuntu 20.04+ / Oracle Linux 8+) | Ubuntu 24.04 / Oracle Linux 9 |
+
+### Tested Configuration
+
+This project was built and tested on:
+
+```
+CPU:    Intel Xeon E5-2683 v4 @ 2.10GHz (8 vCPUs)
+RAM:    32 GB DDR4
+Disk:   146 GB (23 GB used)
+GPU:    None (CPU-only inference)
+OS:     Ubuntu / Oracle Linux
+```
+
+### Model RAM Usage
+
+| Model | File Size | RAM at Runtime |
+|---|---|---|
+| Qwen 2.5 Coder 14B Q4_K_M | ~8.4 GB | ~10 GB |
+| Qwen 2.5 1.5B Instruct Q4_K_M | ~1.0 GB | ~1.5 GB |
+| **Total (both models)** | **~9.4 GB** | **~12 GB** |
+
+### Performance (CPU-only)
+
+| Metric | 14B Model | 1.5B Model |
+|---|---|---|
+| Prompt processing | ~15-25 tokens/sec | ~80-120 tokens/sec |
+| Token generation | ~3-6 tokens/sec | ~20-40 tokens/sec |
+| Time to first token | ~2-5 sec | ~0.5-1 sec |
+
+> **Note**: With GPU acceleration (NVIDIA CUDA), the 14B model can achieve 30-80+ tokens/sec generation speed. llama.cpp supports CUDA, ROCm, Metal, and Vulkan backends.
+
+### llama.cpp Server Configuration
+
+For the **14B main model** (port 8080):
+```bash
+llama-server \
+  --model qwen2.5-coder-14b-instruct-q4_k_m.gguf \
+  --host 0.0.0.0 --port 8080 \
+  --ctx-size 32768 \
+  --parallel 2 \
+  --threads 6
+```
+
+For the **1.5B fast model** (port 8090):
+```bash
+llama-server \
+  --model qwen2.5-1.5b-instruct-q4_k_m.gguf \
+  --host 0.0.0.0 --port 8090 \
+  --ctx-size 8192 \
+  --parallel 2 \
+  --threads 2
+```
+
+> **Tip**: Use `--parallel 2` with `--ctx-size 32768` to get 16K tokens per slot — enough for CodeAgent's optimized prompts. Adjust `--threads` based on your CPU core count.
+
 ## Quick Start
 
 ### Prerequisites
@@ -42,7 +110,7 @@ User Message
 
 ```bash
 # Clone
-git clone https://github.com/YOUR_USERNAME/CodeAgent.git
+git clone https://github.com/tagtuner/CodeAgent.git
 cd CodeAgent
 
 # Install dependencies
