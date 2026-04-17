@@ -70,6 +70,21 @@ class Router:
 
     def _keyword_classify(self, message: str) -> str | None:
         msg_lower = message.lower().strip()
+
+        simple_patterns = (
+            "email", "letter", "draft", "translate", "summarize", "summary",
+            "explain", "what is", "what are", "how does", "define", "meaning",
+            "tell me", "describe", "compare", "difference between",
+            "thank you", "thanks", "hi ", "hello", "hey", "good morning",
+            "good night", "bye", "help me write", "rewrite", "paraphrase",
+        )
+        if any(p in msg_lower for p in simple_patterns):
+            if not any(w in msg_lower for w in (
+                "sql", "oracle", "ebs", "select ", "table", "server",
+                "systemctl", "nginx", "bash", "script", "function", "file",
+            )):
+                return "simple"
+
         if len(msg_lower) < 20 and not any(
             w in msg_lower for w in ("write", "create", "run", "show", "list", "get", "find", "fix")
         ):
