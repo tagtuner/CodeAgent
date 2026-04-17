@@ -1,6 +1,6 @@
 # CodeAgent
 
-A local LLM-powered agentic coding assistant optimized for small/medium models (14B parameters). Replaces cloud-dependent AI assistants with a fully self-hosted solution.
+A local LLM-powered agentic coding assistant with smart 3-model routing (27B + 14B + 1.5B). Replaces cloud-dependent AI assistants with a fully self-hosted solution running on CPU — no GPU required.
 
 ## Why CodeAgent?
 
@@ -8,7 +8,7 @@ Most AI coding assistants (OpenCode, Cursor, etc.) waste **14,000+ tokens** on s
 
 ### Key Features
 
-- **Smart Router**: 1.5B model classifies requests → only relevant tools injected (not all 13+)
+- **Smart 3-Model Router**: 1.5B classifies → routes to **27B Opus** (coding/EBS), **14B** (system), or **1.5B** (greetings)
 - **Agentic Tool Loop**: LLM calls tools, gets results, reasons, calls more tools — like a real agent
 - **13 Built-in Tools**: bash, file read/write/edit, glob search, git, Oracle DB, EBS module guide
 - **Parallel Multi-Worker Terminals**: Up to 5 concurrent bash workers with tabbed UI, each with its own persistent shell session — like tmux split panes in a browser
@@ -28,8 +28,12 @@ Most AI coding assistants (OpenCode, Cursor, etc.) waste **14,000+ tokens** on s
 User Message
   → Smart Router (1.5B model, instant classification)
   → Category: simple | coding | ebs | system
+  → Model Selection:
+      coding/ebs → 27B Opus (superior reasoning)
+      system     → 14B Coder (infrastructure expertise)
+      simple     → 1.5B (greetings) or 27B Opus (writing/drafting)
   → Prompt Builder (inject only relevant 2-4 tools, ~800 tokens)
-  → LLM (14B model) generates response or tool calls
+  → Selected LLM generates response or tool calls
   → If tool call: approval prompt → user Allow/Deny
   → If bash: WorkerPool assigns worker (W1-W5) → live terminal output
   → Tool result fed back → re-prompt → final response
@@ -40,7 +44,7 @@ User Message
 
 CodeAgent runs entirely on **CPU** — no GPU required. Tested and working on:
 
-### Minimum (for 14B + 1.5B models)
+### Minimum (for 14B + 1.5B models only)
 
 | Component | Minimum | Recommended |
 |---|---|---|
@@ -50,59 +54,82 @@ CodeAgent runs entirely on **CPU** — no GPU required. Tested and working on:
 | GPU | Not required | Optional (CUDA/ROCm for faster inference) |
 | OS | Linux (Ubuntu 20.04+ / Oracle Linux 8+) | Ubuntu 24.04 / Oracle Linux 9 |
 
+### Recommended (for all 3 models: 27B + 14B + 1.5B)
+
+| Component | Recommended |
+|---|---|
+| CPU | 16+ cores / 32 threads |
+| RAM | 64 GB |
+| Disk | 80 GB+ free |
+| GPU | Not required (CPU-only works) |
+| OS | Ubuntu 24.04 / Oracle Linux 9 |
+
 ### Tested Configuration
 
 This project was built and tested on:
 
 ```
-CPU:    Intel Xeon E5-2683 v4 @ 2.10GHz (8 vCPUs)
-RAM:    32 GB DDR4
-Disk:   146 GB (23 GB used)
+CPU:    32 vCPUs (16 cores × 2 threads)
+RAM:    64 GB DDR4
+Disk:   146 GB
 GPU:    None (CPU-only inference)
 OS:     Ubuntu / Oracle Linux
+Models: 3 concurrent llama.cpp servers (27B + 14B + 1.5B)
 ```
 
 ### Model RAM Usage
 
-| Model | File Size | RAM at Runtime |
-|---|---|---|
-| Qwen 2.5 Coder 14B Q4_K_M | ~8.4 GB | ~10 GB |
-| Qwen 2.5 1.5B Instruct Q4_K_M | ~1.0 GB | ~1.5 GB |
-| **Total (both models)** | **~9.4 GB** | **~12 GB** |
+| Model | Port | File Size | RAM at Runtime | Role |
+|---|---|---|---|---|
+| Qwen3.5 27B Opus Distilled Q4_K_M | 8085 | ~16 GB | ~18 GB | Coding, EBS, Writing |
+| Qwen 2.5 Coder 14B Q4_K_M | 8080 | ~8.4 GB | ~10 GB | System/Infrastructure |
+| Qwen 2.5 1.5B Instruct Q4_K_M | 8090 | ~1.0 GB | ~1.5 GB | Router + Quick greetings |
+| **Total (all 3 models)** | | **~25.4 GB** | **~30 GB** | |
 
-### Performance (CPU-only)
+### Performance (CPU-only, 32 vCPUs)
 
-| Metric | 14B Model | 1.5B Model |
-|---|---|---|
-| Prompt processing | ~15-25 tokens/sec | ~80-120 tokens/sec |
-| Token generation | ~3-6 tokens/sec | ~20-40 tokens/sec |
-| Time to first token | ~2-5 sec | ~0.5-1 sec |
+| Metric | 27B Opus | 14B Coder | 1.5B Fast |
+|---|---|---|---|
+| Prompt processing | ~10-18 t/s | ~15-25 t/s | ~80-120 t/s |
+| Token generation | ~2-4 t/s | ~3-6 t/s | ~20-40 t/s |
+| Time to first token | ~3-8 sec | ~2-5 sec | ~0.5-1 sec |
 
-> **Note**: With GPU acceleration (NVIDIA CUDA), the 14B model can achieve 30-80+ tokens/sec generation speed. llama.cpp supports CUDA, ROCm, Metal, and Vulkan backends.
+> **Note**: With GPU acceleration (NVIDIA CUDA), models can achieve 30-80+ tokens/sec generation speed. llama.cpp supports CUDA, ROCm, Metal, and Vulkan backends.
 
 ### llama.cpp Server Configuration
 
-For the **14B main model** (port 8080):
+For the **27B Opus model** (port 8085) — coding/EBS/writing:
+```bash
+llama-server \
+  --model Qwen3.5-27B-Opus-Q4_K_M.gguf \
+  --host 127.0.0.1 --port 8085 \
+  --ctx-size 32768 --batch-size 512 --ubatch-size 256 \
+  --parallel 2 --cont-batching \
+  --cache-type-k q8_0 --cache-type-v q8_0 \
+  --threads 16 --no-mmap --jinja -ngl 0
+```
+
+For the **14B main model** (port 8080) — system/infrastructure:
 ```bash
 llama-server \
   --model qwen2.5-coder-14b-instruct-q4_k_m.gguf \
-  --host 0.0.0.0 --port 8080 \
+  --host 127.0.0.1 --port 8080 \
   --ctx-size 32768 \
   --parallel 2 \
-  --threads 6
+  --threads 20
 ```
 
-For the **1.5B fast model** (port 8090):
+For the **1.5B fast model** (port 8090) — router/greetings:
 ```bash
 llama-server \
   --model qwen2.5-1.5b-instruct-q4_k_m.gguf \
-  --host 0.0.0.0 --port 8090 \
+  --host 127.0.0.1 --port 8090 \
   --ctx-size 8192 \
   --parallel 2 \
-  --threads 2
+  --threads 4
 ```
 
-> **Tip**: Use `--parallel 2` with `--ctx-size 32768` to get 16K tokens per slot — enough for CodeAgent's optimized prompts. Adjust `--threads` based on your CPU core count.
+> **Tip**: Adjust `--threads` based on your CPU core count. Use `--no-mmap` for the 27B model to prevent disk I/O bottlenecks. All 3 servers run concurrently — ensure enough RAM.
 
 ## Quick Start
 
@@ -154,15 +181,20 @@ Edit `config.yaml`:
 ```yaml
 models:
   main:
-    url: http://127.0.0.1:8080/v1    # llama.cpp server (14B model)
+    url: http://127.0.0.1:8080/v1    # 14B — system/infrastructure tasks
     name: qwen2.5-coder-14b
     ctx_size: 16384
     max_output: 4096
   fast:
-    url: http://127.0.0.1:8090/v1    # llama.cpp server (1.5B model)
+    url: http://127.0.0.1:8090/v1    # 1.5B — router + quick greetings
     name: qwen2.5-1.5b
     ctx_size: 8192
     max_output: 512
+  opus:
+    url: http://127.0.0.1:8085/v1    # 27B — coding/EBS/writing (best quality)
+    name: qwen3.5-27b-opus
+    ctx_size: 16384
+    max_output: 4096
 ```
 
 ## Project Structure
@@ -289,15 +321,21 @@ MCP tools are auto-discovered and registered on startup.
 
 ## Recommended Models
 
-| Model | Size | Use Case |
-|---|---|---|
-| Qwen 2.5 Coder 14B Q4_K_M | 8.4 GB | Main coding model |
-| Qwen 2.5 1.5B Instruct Q4_K_M | 1.0 GB | Fast router/simple queries |
-| Qwen 2.5 Coder 32B Q4_K_M | 18 GB | Better quality (needs more RAM) |
+| Model | Size | Use Case | HuggingFace |
+|---|---|---|---|
+| **Qwen3.5 27B Opus Distilled Q4_K_M** | 16 GB | Coding, EBS, writing (best reasoning) | [Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF](https://huggingface.co/Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF) |
+| Qwen 2.5 Coder 14B Q4_K_M | 8.4 GB | System/infrastructure tasks | [bartowski/Qwen2.5-Coder-14B-Instruct-GGUF](https://huggingface.co/bartowski/Qwen2.5-Coder-14B-Instruct-GGUF) |
+| Qwen 2.5 1.5B Instruct Q4_K_M | 1.0 GB | Fast router + simple greetings | [bartowski/Qwen2.5-1.5B-Instruct-GGUF](https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF) |
 
 ## Changelog
 
-### v0.5 — Parallel Multi-Worker Terminals (Latest)
+### v0.6 — 3-Model Smart Routing with 27B Opus (Latest)
+- **Qwen3.5-27B Opus Distilled**: Added as primary model for coding, EBS, and writing tasks — fine-tuned on Claude 4.6 Opus reasoning
+- **Smart 3-model routing**: Coding/EBS → 27B Opus, System → 14B Coder, Greetings → 1.5B Fast
+- **Non-greeting simple tasks** (draft, write, explain) now routed to 27B for superior quality
+- **64GB RAM / 32 vCPU** tested configuration — all 3 models running concurrently on CPU
+
+### v0.5 — Parallel Multi-Worker Terminals
 - **WorkerPool**: Up to 5 concurrent bash workers, each with its own persistent shell
 - **Tabbed Terminal UI**: W1, W2, W3... tabs with color-coded status dots (yellow=running, green=done, red=error)
 - **Per-worker controls**: Kill individual workers via tab, clear output, minimize panel
