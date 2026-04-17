@@ -129,6 +129,8 @@ def create_app(
                         payload["tool_name"] = event.tool_name
                     if event.tool_args:
                         payload["tool_args"] = event.tool_args
+                    if event.metadata:
+                        payload["metadata"] = event.metadata
                     await websocket.send_text(json.dumps(payload))
 
                 session_dir = config.session.get("dir", "/opt/codeagent/sessions")

@@ -126,6 +126,8 @@ class Agent:
         text = resp["content"]
         self.session.add_assistant(text)
         yield AgentEvent(type="text", content=text)
+        if resp.get("stats"):
+            yield AgentEvent(type="stats", metadata=resp["stats"])
         yield AgentEvent(type="done")
 
     def _extract_tool_calls(self, text: str) -> list[tuple[str, dict]]:
