@@ -106,6 +106,7 @@ class WorkerPool:
         self._next_id = 1
 
     def create(self) -> tuple[int, SubWorker] | None:
+        self._cleanup_finished()
         if len(self.workers) >= self.MAX_WORKERS:
             return None
         wid = self._next_id
@@ -113,6 +114,12 @@ class WorkerPool:
         w = SubWorker(work_dir=f"{self.work_dir}/w{wid}")
         self.workers[wid] = w
         return wid, w
+
+    def _cleanup_finished(self):
+        finished = [wid for wid, w in self.workers.items()
+                    if w.state in ("done", "idle", "error") and w.current_cmd is None]
+        for wid in finished:
+            del self.workers[wid]
 
     def get(self, worker_id: int) -> SubWorker | None:
         return self.workers.get(worker_id)
