@@ -122,20 +122,24 @@ class Agent:
         yield AgentEvent(type="done")
 
     async def _simple_response(self, message: str):
-        llm = self.llm_fast or self.llm_main
+        msg_lower = message.lower()
+        is_greeting = len(message) < 30 and not any(
+            w in msg_lower for w in ("draft", "write", "email", "letter", "explain", "summarize", "translate")
+        )
+        llm = (self.llm_fast or self.llm_main) if is_greeting else self.llm_main
+        max_tok = 200 if is_greeting else 1000
+
         resp = await llm.chat(
             messages=[
-                {"role": "system", "content": "You are CodeAgent, a helpful assistant. Be concise and direct."},
+                {"role": "system", "content": "You are CodeAgent, a helpful professional assistant. Write clear, well-formatted responses."},
                 {"role": "user", "content": message},
             ],
-            max_tokens=500,
+            max_tokens=max_tok,
             temperature=0.7,
         )
         text = resp["content"]
         self.session.add_assistant(text)
         yield AgentEvent(type="text", content=text)
-        if resp.get("stats"):
-            yield AgentEvent(type="stats", metadata=resp["stats"])
         if resp.get("stats"):
             yield AgentEvent(type="stats", metadata=resp["stats"])
         yield AgentEvent(type="done")
