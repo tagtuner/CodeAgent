@@ -10,6 +10,7 @@ from core.llm import LLMClient, Chunk
 from core.prompt import PromptBuilder
 from core.session import Session
 from core.router import Router
+from core.worker import SubWorker
 from tools.base import ToolRegistry
 
 TOOL_CALL_RE = re.compile(r"<(?:tool_call|tools)>\s*(\{.*?\})\s*</(?:tool_call|tools)>", re.DOTALL)
@@ -50,6 +51,7 @@ class Agent:
         self.top_p = config.agent.get("top_p", 0.9)
         self.approval_queue: asyncio.Queue = asyncio.Queue()
         self._cancelled = False
+        self.worker: SubWorker | None = None
 
     async def run(self, user_message: str) -> AsyncIterator[AgentEvent]:
         self.session.add_user(user_message)
@@ -136,18 +138,42 @@ class Agent:
                         self.session.add_tool_result(tc_name, result_str)
                         continue
 
-                    yield AgentEvent(
-                        type="tool_start",
-                        tool_name=tc_name,
-                        tool_args=tc_args,
-                    )
-                    try:
-                        result = await self.registry.execute(tc_name, tc_args)
-                        result_str = result if isinstance(result, str) else json.dumps(result, default=str)
+                    if tc_name == "bash":
+                        command = tc_args.get("command", "")
+                        if not self.worker:
+                            self.worker = SubWorker()
+                        yield AgentEvent(type="worker_start")
+                        yield AgentEvent(type="worker_cmd", content=command)
+
+                        output_lines = []
+                        async for line in self.worker.execute(command):
+                            if self._cancelled:
+                                await self.worker.kill()
+                                break
+                            output_lines.append(line)
+                            yield AgentEvent(type="worker_output", content=line)
+
+                        ec = self.worker.exit_code if self.worker and self.worker.exit_code is not None else -1
+                        result_str = "\n".join(output_lines)
+                        if ec != 0:
+                            result_str += f"\n[exit_code: {ec}]"
                         if len(result_str) > 4000:
                             result_str = result_str[:4000] + "\n... (truncated)"
-                    except Exception as e:
-                        result_str = f"Error: {e}"
+
+                        yield AgentEvent(type="worker_done", metadata={"exit_code": ec})
+                    else:
+                        yield AgentEvent(
+                            type="tool_start",
+                            tool_name=tc_name,
+                            tool_args=tc_args,
+                        )
+                        try:
+                            result = await self.registry.execute(tc_name, tc_args)
+                            result_str = result if isinstance(result, str) else json.dumps(result, default=str)
+                            if len(result_str) > 4000:
+                                result_str = result_str[:4000] + "\n... (truncated)"
+                        except Exception as e:
+                            result_str = f"Error: {e}"
 
                     yield AgentEvent(
                         type="tool_result",

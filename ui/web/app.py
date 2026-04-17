@@ -116,6 +116,7 @@ def create_app(
         )
 
         input_queue: asyncio.Queue = asyncio.Queue()
+        mid_task_queue: asyncio.Queue = asyncio.Queue()
 
         async def ws_receiver():
             try:
@@ -132,12 +133,63 @@ def create_app(
                             agent.approval_queue.put_nowait(False)
                         except asyncio.QueueFull:
                             pass
+                    elif msg_type == "worker_kill":
+                        if agent.worker:
+                            await agent.worker.kill()
+                        agent._cancelled = True
+                        try:
+                            agent.approval_queue.put_nowait(False)
+                        except asyncio.QueueFull:
+                            pass
+                    elif msg_type == "mid_task_query":
+                        await mid_task_queue.put(msg)
                     else:
                         await input_queue.put(msg)
             except (WebSocketDisconnect, Exception):
                 await input_queue.put(None)
+                await mid_task_queue.put(None)
+
+        async def mid_task_handler():
+            try:
+                while True:
+                    msg = await mid_task_queue.get()
+                    if msg is None:
+                        break
+                    user_text = msg.get("message", "")
+                    if not user_text:
+                        continue
+
+                    buffer = ""
+                    cmd = ""
+                    if agent.worker:
+                        buffer = agent.worker.get_buffer(last_n=30)
+                        cmd = agent.worker.current_cmd or ""
+
+                    llm = _llm_fast or _llm_main
+                    ctx = f"Currently executing: `{cmd}`\nRecent terminal output:\n```\n{buffer}\n```" if buffer else "No command currently running."
+                    try:
+                        resp = await llm.chat(
+                            messages=[
+                                {"role": "system", "content": f"You are CodeAgent. A worker is running commands. {ctx}\nAnswer the user's question briefly."},
+                                {"role": "user", "content": user_text},
+                            ],
+                            max_tokens=300,
+                            temperature=0.7,
+                        )
+                        await websocket.send_text(json.dumps({
+                            "type": "text",
+                            "content": resp["content"],
+                        }))
+                    except Exception as e:
+                        await websocket.send_text(json.dumps({
+                            "type": "error",
+                            "content": str(e),
+                        }))
+            except Exception:
+                pass
 
         receiver = asyncio.create_task(ws_receiver())
+        mid_handler = asyncio.create_task(mid_task_handler())
 
         try:
             while True:
@@ -153,7 +205,7 @@ def create_app(
                 agent.approval_queue = asyncio.Queue()
 
                 async for event in agent.run(user_text):
-                    if agent._cancelled and event.type not in ("status", "done"):
+                    if agent._cancelled and event.type not in ("status", "done", "worker_done"):
                         continue
 
                     payload = {"type": event.type, "content": event.content}
@@ -175,5 +227,8 @@ def create_app(
             pass
         finally:
             receiver.cancel()
+            mid_handler.cancel()
+            if agent.worker:
+                await agent.worker.close()
 
     return app

@@ -23,7 +23,6 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
 .status-dot.offline { background: var(--red); }
 .btn { background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: all 0.15s; }
 .btn:hover { background: var(--border); border-color: var(--accent); }
-.btn-accent { background: var(--accent); color: #000; border-color: var(--accent); }
 
 .main { display: flex; flex: 1; overflow: hidden; }
 .sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
@@ -37,7 +36,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
 .session-item:hover .del-btn { display: inline-block; }
 .sidebar-footer { padding: 12px; border-top: 1px solid var(--border); }
 
-.chat-area { flex: 1; display: flex; flex-direction: column; }
+.chat-area { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .messages { flex: 1; overflow-y: auto; padding: 20px; }
 
 .msg { margin-bottom: 16px; animation: fadeIn 0.2s; }
@@ -67,7 +66,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
 .msg-actions button:hover { border-color: var(--border); color: var(--text); background: var(--border); }
 
 .approval-box { background: var(--surface); border: 1px solid var(--yellow); border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; animation: fadeIn 0.2s; max-width: 85%; }
-.approval-title { color: var(--yellow); font-weight: 600; font-size: 13px; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+.approval-title { color: var(--yellow); font-weight: 600; font-size: 13px; margin-bottom: 8px; }
 .approval-box .tool-info { font-size: 13px; margin-bottom: 6px; color: var(--text); }
 .approval-box pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 11px; font-family: var(--mono); margin: 8px 0; overflow-x: auto; max-height: 200px; overflow-y: auto; }
 .approval-btns { display: flex; gap: 8px; margin-top: 10px; }
@@ -76,6 +75,24 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
 .btn-allow:hover { opacity: 0.85; }
 .btn-deny { background: var(--red); color: #fff; }
 .btn-deny:hover { opacity: 0.85; }
+
+/* Terminal Panel */
+.terminal-panel { display: none; flex-direction: column; background: #0a0a0a; border-top: 2px solid var(--accent); max-height: 280px; min-height: 0; flex-shrink: 0; transition: max-height 0.3s ease; }
+.terminal-panel.visible { display: flex; }
+.terminal-panel.minimized { max-height: 34px; overflow: hidden; }
+.term-toolbar { display: flex; align-items: center; padding: 5px 12px; background: #1a1a2e; border-bottom: 1px solid #2a2a3e; gap: 8px; flex-shrink: 0; }
+.term-title { font-size: 12px; font-weight: 600; color: var(--accent); font-family: var(--mono); }
+.term-status { font-size: 11px; color: var(--text2); flex: 1; font-family: var(--mono); }
+.term-btn { background: none; border: 1px solid #333; color: var(--text2); cursor: pointer; padding: 1px 8px; border-radius: 3px; font-size: 11px; font-family: var(--mono); transition: all 0.12s; }
+.term-btn:hover { color: var(--text); border-color: var(--accent); }
+.term-kill { color: var(--red); border-color: #442; }
+.term-kill:hover { border-color: var(--red); }
+.term-body { overflow-y: auto; padding: 8px 12px; font-family: var(--mono); font-size: 12px; line-height: 1.6; color: #c8c8c8; flex: 1; }
+.term-cmd { color: var(--green); font-weight: 600; margin-top: 6px; }
+.term-cmd::before { content: '$ '; color: var(--accent); font-weight: 400; }
+.term-line { color: #d0d0d0; }
+.term-exit-ok { color: var(--green); font-size: 11px; margin-top: 4px; padding: 2px 0; border-top: 1px dashed #222; }
+.term-exit-err { color: var(--red); font-size: 11px; margin-top: 4px; padding: 2px 0; border-top: 1px dashed #222; }
 
 .stats-bar { display: flex; gap: 16px; padding: 6px 20px; background: var(--surface2); border-top: 1px solid var(--border); font-size: 12px; color: var(--text2); align-items: center; flex-shrink: 0; }
 .stats-bar .stat { display: flex; align-items: center; gap: 4px; }
@@ -136,6 +153,18 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
 
   <div class="chat-area">
     <div class="messages" id="messages"></div>
+
+    <div class="terminal-panel" id="termPanel">
+      <div class="term-toolbar">
+        <span class="term-title">Terminal</span>
+        <span class="term-status" id="termStatus">idle</span>
+        <button class="term-btn" onclick="toggleTerminal()" title="Minimize/Expand">_</button>
+        <button class="term-btn" onclick="clearTerminal()" title="Clear">C</button>
+        <button class="term-btn term-kill" onclick="killWorker()" title="Kill process">X</button>
+      </div>
+      <div class="term-body" id="termBody"></div>
+    </div>
+
     <div class="stats-bar" id="statsBar" style="display:none">
       <div class="stat"><span class="stat-icon">T</span> <span class="stat-value" id="statTokens">0</span> <span class="stat-label">tokens</span></div>
       <div class="stat"><span class="stat-icon">&#9201;</span> <span class="stat-value elapsed" id="statTime">0s</span></div>
@@ -160,6 +189,7 @@ let sessionId = null;
 let processing = false;
 let streamStart = 0;
 let streamTokens = 0;
+let workerActive = false;
 
 async function init() {
   try {
@@ -210,6 +240,7 @@ async function newSession() {
     connectWS();
     document.getElementById('messages').innerHTML = '';
     document.getElementById('msgCount').textContent = '0';
+    hideTerminal();
     addMsg('status', 'New session started — ' + sessionId);
   } catch (e) {
     addMsg('error', 'Failed to create session: ' + e);
@@ -220,6 +251,7 @@ async function switchSession(id) {
   sessionId = id;
   connectWS();
   document.getElementById('messages').innerHTML = '';
+  hideTerminal();
   document.querySelectorAll('.session-item').forEach(el => {
     el.classList.toggle('active', el.dataset.sid === id);
   });
@@ -279,11 +311,32 @@ function handleEvent(evt) {
     case 'tool_start':
       finalizeDelta(null);
       updateLiveStats();
-      addMsg('tool', `Calling <b>${escHtml(evt.tool_name)}</b>`, 'tool-start');
+      addMsg('tool', 'Calling <b>' + escHtml(evt.tool_name) + '</b>', 'tool-start');
       break;
     case 'tool_result':
       updateLiveStats();
-      addMsg('tool', `<b>${escHtml(evt.tool_name)}</b> result:\n${escHtml(evt.content)}`, 'tool-result');
+      addMsg('tool', '<b>' + escHtml(evt.tool_name) + '</b> result:\n' + escHtml(evt.content), 'tool-result');
+      break;
+    case 'worker_start':
+      showTerminal();
+      workerActive = true;
+      updateTermStatus('running');
+      break;
+    case 'worker_cmd':
+      appendTermLine(evt.content, 'cmd');
+      break;
+    case 'worker_output':
+      appendTermLine(evt.content, 'line');
+      break;
+    case 'worker_done':
+      workerActive = false;
+      updateTermStatus('done');
+      var ec = evt.metadata ? evt.metadata.exit_code : -1;
+      if (ec === 0) {
+        appendTermLine('Done (exit 0)', 'exit-ok');
+      } else {
+        appendTermLine('Exit code: ' + ec, 'exit-err');
+      }
       break;
     case 'status':
       addMsg('status', evt.content);
@@ -299,6 +352,7 @@ function handleEvent(evt) {
       removeTyping();
       finalizeDelta(null);
       processing = false;
+      workerActive = false;
       document.getElementById('sendBtn').style.display = '';
       document.getElementById('stopBtn').style.display = 'none';
       document.getElementById('sendBtn').disabled = false;
@@ -310,7 +364,17 @@ function handleEvent(evt) {
 function sendMessage() {
   const input = document.getElementById('chatInput');
   const msg = input.value.trim();
-  if (!msg || !ws || ws.readyState !== 1 || processing) return;
+  if (!msg || !ws || ws.readyState !== 1) return;
+
+  if (workerActive) {
+    addMsg('user', msg);
+    ws.send(JSON.stringify({ type: 'mid_task_query', message: msg }));
+    input.value = '';
+    return;
+  }
+
+  if (processing) return;
+
   processing = true;
   document.getElementById('sendBtn').disabled = true;
   document.getElementById('sendBtn').style.display = 'none';
@@ -333,10 +397,68 @@ function stopGeneration() {
   removeTyping();
   finalizeDelta(null);
   processing = false;
+  workerActive = false;
   document.getElementById('sendBtn').style.display = '';
   document.getElementById('stopBtn').style.display = 'none';
   document.getElementById('sendBtn').disabled = false;
   document.getElementById('chatInput').focus();
+}
+
+/* ── Terminal Panel ── */
+
+function showTerminal() {
+  const panel = document.getElementById('termPanel');
+  panel.classList.add('visible');
+  panel.classList.remove('minimized');
+}
+
+function hideTerminal() {
+  const panel = document.getElementById('termPanel');
+  panel.classList.remove('visible');
+  workerActive = false;
+}
+
+function toggleTerminal() {
+  document.getElementById('termPanel').classList.toggle('minimized');
+}
+
+function clearTerminal() {
+  document.getElementById('termBody').innerHTML = '';
+}
+
+function killWorker() {
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'worker_kill' }));
+  }
+  workerActive = false;
+  updateTermStatus('killed');
+  appendTermLine('Process killed by user', 'exit-err');
+}
+
+function appendTermLine(text, cls) {
+  const body = document.getElementById('termBody');
+  const div = document.createElement('div');
+  div.className = 'term-' + cls;
+  div.textContent = text;
+  body.appendChild(div);
+  body.scrollTop = body.scrollHeight;
+}
+
+function updateTermStatus(state) {
+  const el = document.getElementById('termStatus');
+  if (state === 'running') {
+    el.textContent = 'running...';
+    el.style.color = 'var(--yellow)';
+  } else if (state === 'done') {
+    el.textContent = 'completed';
+    el.style.color = 'var(--green)';
+  } else if (state === 'killed') {
+    el.textContent = 'killed';
+    el.style.color = 'var(--red)';
+  } else {
+    el.textContent = 'idle';
+    el.style.color = 'var(--text2)';
+  }
 }
 
 /* ── Message action buttons ── */
@@ -344,7 +466,6 @@ function stopGeneration() {
 function createActions(role) {
   const wrap = document.createElement('div');
   wrap.className = 'msg-actions';
-
   const mkBtn = (label, title, fn) => {
     const b = document.createElement('button');
     b.textContent = label;
@@ -352,27 +473,19 @@ function createActions(role) {
     b.onclick = fn;
     return b;
   };
-
   wrap.appendChild(mkBtn('Copy', 'Copy to clipboard', function() { copyMsg(this); }));
-
   if (role === 'user') {
     wrap.appendChild(mkBtn('Edit', 'Edit message', function() { editMsg(this); }));
   }
   if (role === 'assistant') {
     wrap.appendChild(mkBtn('Regen', 'Regenerate response', function() { regenerateMsg(this); }));
   }
-
   wrap.appendChild(mkBtn('Del', 'Delete message', function() { deleteMsg(this); }));
   return wrap;
 }
 
-function getMsgEl(btn) {
-  return btn.closest('.msg');
-}
-
-function getMsgText(msgEl) {
-  return msgEl?.dataset?.text || msgEl?.querySelector('.msg-bubble')?.textContent || '';
-}
+function getMsgEl(btn) { return btn.closest('.msg'); }
+function getMsgText(msgEl) { return msgEl?.dataset?.text || msgEl?.querySelector('.msg-bubble')?.textContent || ''; }
 
 function copyMsg(btn) {
   const msgEl = getMsgEl(btn);
@@ -386,8 +499,7 @@ function copyMsg(btn) {
 
 function editMsg(btn) {
   const msgEl = getMsgEl(btn);
-  const text = getMsgText(msgEl);
-  document.getElementById('chatInput').value = text;
+  document.getElementById('chatInput').value = getMsgText(msgEl);
   document.getElementById('chatInput').focus();
 }
 
@@ -400,9 +512,7 @@ function regenerateMsg(btn) {
   const msgEl = getMsgEl(btn);
   if (!msgEl) return;
   let prev = msgEl.previousElementSibling;
-  while (prev && !prev.classList.contains('msg-user')) {
-    prev = prev.previousElementSibling;
-  }
+  while (prev && !prev.classList.contains('msg-user')) prev = prev.previousElementSibling;
   if (!prev) return;
   const text = getMsgText(prev);
   msgEl.remove();
@@ -469,10 +579,8 @@ function respondApproval(approved) {
 function addMsg(role, content, extraClass) {
   const container = document.getElementById('messages');
   const div = document.createElement('div');
-  div.className = `msg msg-${role} ${extraClass || ''}`;
-  if (role === 'user' || role === 'assistant') {
-    div.dataset.text = content;
-  }
+  div.className = 'msg msg-' + role + ' ' + (extraClass || '');
+  if (role === 'user' || role === 'assistant') div.dataset.text = content;
   const bubble = document.createElement('div');
   bubble.className = 'msg-bubble';
   if (role === 'tool') {
@@ -491,9 +599,7 @@ function addMsg(role, content, extraClass) {
     bubble.innerHTML = content;
   }
   div.appendChild(bubble);
-  if (role === 'user' || role === 'assistant') {
-    div.appendChild(createActions(role));
-  }
+  if (role === 'user' || role === 'assistant') div.appendChild(createActions(role));
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
 }
@@ -520,16 +626,12 @@ function appendDelta(text) {
 }
 
 function finalizeDelta(fullText) {
-  if (_streamBubble && fullText) {
-    _streamBubble.innerHTML = renderMd(fullText);
-  }
+  if (_streamBubble && fullText) _streamBubble.innerHTML = renderMd(fullText);
   const el = document.getElementById('streamMsg');
   if (el) {
     el.dataset.text = fullText || _streamText;
     el.removeAttribute('id');
-    if (!el.querySelector('.msg-actions')) {
-      el.appendChild(createActions('assistant'));
-    }
+    if (!el.querySelector('.msg-actions')) el.appendChild(createActions('assistant'));
   }
   _streamBubble = null;
   _streamText = '';
@@ -590,9 +692,7 @@ function showStats(s) {
 
 function renderMd(text) {
   let html = escHtml(text);
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
-    `<pre><code>${code.trim()}</code></pre>`
-  );
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => '<pre><code>' + code.trim() + '</code></pre>');
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
