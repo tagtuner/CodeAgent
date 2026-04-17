@@ -11,11 +11,16 @@ Most AI coding assistants (OpenCode, Cursor, etc.) waste **14,000+ tokens** on s
 - **Smart Router**: 1.5B model classifies requests → only relevant tools injected (not all 13+)
 - **Agentic Tool Loop**: LLM calls tools, gets results, reasons, calls more tools — like a real agent
 - **13 Built-in Tools**: bash, file read/write/edit, glob search, git, Oracle DB, EBS module guide
+- **Parallel Multi-Worker Terminals**: Up to 5 concurrent bash workers with tabbed UI, each with its own persistent shell session — like tmux split panes in a browser
+- **Tool Approval System**: Every tool call requires user approval before execution (Allow/Deny)
+- **Stop/Cancel**: Abort any ongoing AI response or worker mid-stream
+- **Message Actions**: Copy, Edit, Regenerate, Delete on every chat message
 - **MCP Client**: Connect external MCP tool servers (stdio + SSE transport)
 - **Skills System**: Load `.md` skill files that auto-activate based on keywords
 - **Dual Interface**: Terminal UI (Textual) + Web UI (FastAPI + WebSocket)
-- **Token Stats**: Real-time token count, elapsed time, tokens/sec displayed in UI
-- **Session Management**: Save/load conversation history with token-aware trimming
+- **Live Token Stats**: Real-time token count, elapsed time, tokens/sec — resets per request, just like llama.cpp's UI
+- **Session Management**: Save/load/delete conversation history with token-aware trimming
+- **Mid-Task Queries**: Ask questions while workers are running — AI responds based on live terminal state
 
 ### Architecture
 
@@ -25,8 +30,10 @@ User Message
   → Category: simple | coding | ebs | system
   → Prompt Builder (inject only relevant 2-4 tools, ~800 tokens)
   → LLM (14B model) generates response or tool calls
-  → If tool call: execute → feed result back → re-prompt
-  → Final response displayed with token stats
+  → If tool call: approval prompt → user Allow/Deny
+  → If bash: WorkerPool assigns worker (W1-W5) → live terminal output
+  → Tool result fed back → re-prompt → final response
+  → Token stats displayed (prompt/completion/total/t/s)
 ```
 
 ## Hardware Requirements
@@ -167,12 +174,13 @@ CodeAgent/
 ├── requirements.txt         # Python dependencies
 ├── deploy.sh                # Automated deployment script
 ├── core/                    # Core engine
-│   ├── agent.py             # Agentic loop (tool call → execute → re-prompt)
+│   ├── agent.py             # Agentic loop (tool call → approval → execute → re-prompt)
 │   ├── config.py            # YAML config loader
 │   ├── llm.py               # Async LLM client with streaming + stats
 │   ├── prompt.py            # Smart prompt builder (<1000 token system prompts)
 │   ├── router.py            # 1.5B-based request classifier
-│   └── session.py           # Conversation history with token-aware trimming
+│   ├── session.py           # Conversation history with token-aware trimming
+│   └── worker.py            # SubWorker + WorkerPool (max 5 parallel bash terminals)
 ├── tools/                   # Tool system
 │   ├── base.py              # BaseTool + ToolRegistry
 │   ├── bash_tool.py         # Shell command execution
@@ -286,6 +294,41 @@ MCP tools are auto-discovered and registered on startup.
 | Qwen 2.5 Coder 14B Q4_K_M | 8.4 GB | Main coding model |
 | Qwen 2.5 1.5B Instruct Q4_K_M | 1.0 GB | Fast router/simple queries |
 | Qwen 2.5 Coder 32B Q4_K_M | 18 GB | Better quality (needs more RAM) |
+
+## Changelog
+
+### v0.5 — Parallel Multi-Worker Terminals (Latest)
+- **WorkerPool**: Up to 5 concurrent bash workers, each with its own persistent shell
+- **Tabbed Terminal UI**: W1, W2, W3... tabs with color-coded status dots (yellow=running, green=done, red=error)
+- **Per-worker controls**: Kill individual workers via tab, clear output, minimize panel
+- **Mid-task queries**: Ask the AI questions while workers execute — responds using live terminal context from all workers
+- **Hard limit**: Max 5 workers enforced to protect server resources
+
+### v0.4 — Sub-Worker Terminal System
+- Persistent background bash shell for command execution
+- Live terminal panel with streaming output
+- Worker state awareness — AI knows what's running in the terminal
+- Kill worker support from UI
+
+### v0.3 — Tool Approval + Stop/Cancel + Message Actions
+- **Tool approval**: Every tool call (bash, file ops, SQL) requires explicit user Allow/Deny
+- **Stop button**: Cancel any ongoing AI response or tool execution mid-stream
+- **Message actions**: Copy, Edit, Regenerate, Delete buttons on every message
+- 120-second approval timeout with auto-deny
+
+### v0.2 — Live Token Stats + Smart Routing
+- Real-time streaming token stats (prompt/completion/total/t/s) — resets per request
+- Smart simple response routing: greetings → 1.5B fast model, writing tasks → 14B for quality
+- Improved router classification to prevent false tool triggers
+- Session history loading and deletion from sidebar
+
+### v0.1 — Initial Release
+- Smart Router with 1.5B classification
+- Agentic tool loop with 13 built-in tools
+- MCP client (stdio + SSE)
+- Skills system with keyword triggers
+- Web UI + Terminal UI
+- Token-aware session management
 
 ## License
 
