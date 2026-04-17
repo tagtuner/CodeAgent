@@ -70,6 +70,7 @@ class Agent:
             messages = self.prompt_builder.build_messages(system_prompt, history)
 
             full_text = ""
+            llm_stats = None
             async for chunk in self.llm_main.stream_chat(
                 messages,
                 temperature=self.temperature,
@@ -78,6 +79,9 @@ class Agent:
             ):
                 if chunk.type == "text":
                     full_text += chunk.content
+                    yield AgentEvent(type="text_delta", content=chunk.content)
+                elif chunk.type == "done" and chunk.stats:
+                    llm_stats = chunk.stats
 
             tool_calls = self._extract_tool_calls(full_text)
 
@@ -85,9 +89,13 @@ class Agent:
                 clean_text = self._clean_response(full_text)
                 self.session.add_assistant(clean_text)
                 yield AgentEvent(type="text", content=clean_text)
+                if llm_stats:
+                    yield AgentEvent(type="stats", metadata=llm_stats)
                 break
             else:
                 self.session.add_assistant(full_text)
+                if llm_stats:
+                    yield AgentEvent(type="stats", metadata=llm_stats)
                 for tc_name, tc_args in tool_calls:
                     yield AgentEvent(
                         type="tool_start",
@@ -126,6 +134,8 @@ class Agent:
         text = resp["content"]
         self.session.add_assistant(text)
         yield AgentEvent(type="text", content=text)
+        if resp.get("stats"):
+            yield AgentEvent(type="stats", metadata=resp["stats"])
         if resp.get("stats"):
             yield AgentEvent(type="stats", metadata=resp["stats"])
         yield AgentEvent(type="done")

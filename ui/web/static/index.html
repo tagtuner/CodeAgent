@@ -138,6 +138,8 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
 let ws = null;
 let sessionId = null;
 let processing = false;
+let streamStart = 0;
+let streamTokens = 0;
 
 async function init() {
   try {
@@ -255,14 +257,22 @@ function connectWS() {
 
 function handleEvent(evt) {
   switch (evt.type) {
+    case 'text_delta':
+      removeTyping();
+      appendDelta(evt.content);
+      updateLiveStats();
+      break;
     case 'text':
       removeTyping();
-      addMsg('assistant', evt.content);
+      finalizeDelta(evt.content);
       break;
     case 'tool_start':
+      finalizeDelta(null);
+      updateLiveStats();
       addMsg('tool', `Calling <b>${evt.tool_name}</b>`, 'tool-start');
       break;
     case 'tool_result':
+      updateLiveStats();
       addMsg('tool', `<b>${evt.tool_name}</b> result:\n${escHtml(evt.content)}`, 'tool-result');
       break;
     case 'status':
@@ -290,6 +300,9 @@ function sendMessage() {
   if (!msg || !ws || ws.readyState !== 1 || processing) return;
   processing = true;
   document.getElementById('sendBtn').disabled = true;
+  streamStart = Date.now();
+  streamTokens = 0;
+  resetStats();
   addMsg('user', msg);
   showTyping();
   ws.send(JSON.stringify({ message: msg }));
@@ -324,6 +337,37 @@ function addMsg(role, content, extraClass) {
   container.scrollTop = container.scrollHeight;
 }
 
+let _streamBubble = null;
+let _streamText = '';
+
+function appendDelta(text) {
+  const container = document.getElementById('messages');
+  if (!_streamBubble) {
+    const div = document.createElement('div');
+    div.className = 'msg msg-assistant';
+    div.id = 'streamMsg';
+    const bubble = document.createElement('div');
+    bubble.className = 'msg-bubble';
+    div.appendChild(bubble);
+    container.appendChild(div);
+    _streamBubble = bubble;
+    _streamText = '';
+  }
+  _streamText += text;
+  _streamBubble.innerHTML = renderMd(_streamText);
+  container.scrollTop = container.scrollHeight;
+}
+
+function finalizeDelta(fullText) {
+  if (_streamBubble && fullText) {
+    _streamBubble.innerHTML = renderMd(fullText);
+  }
+  _streamBubble = null;
+  _streamText = '';
+  const el = document.getElementById('streamMsg');
+  if (el) el.removeAttribute('id');
+}
+
 function showTyping() {
   const container = document.getElementById('messages');
   const div = document.createElement('div');
@@ -343,15 +387,37 @@ function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+function resetStats() {
+  const bar = document.getElementById('statsBar');
+  bar.style.display = 'flex';
+  document.getElementById('statTokens').textContent = '0';
+  document.getElementById('statTime').textContent = '0s';
+  document.getElementById('statTPS').textContent = '0';
+  document.getElementById('statPrompt').textContent = '-';
+  document.getElementById('statCompletion').textContent = '0';
+}
+
+function updateLiveStats() {
+  const bar = document.getElementById('statsBar');
+  bar.style.display = 'flex';
+  streamTokens++;
+  const elapsed = (Date.now() - streamStart) / 1000;
+  const tps = streamTokens / (elapsed || 1);
+  document.getElementById('statTokens').textContent = streamTokens;
+  document.getElementById('statTime').textContent = elapsed.toFixed(1) + 's';
+  document.getElementById('statTPS').textContent = tps.toFixed(2);
+  document.getElementById('statCompletion').textContent = streamTokens;
+}
+
 function showStats(s) {
   if (!s) return;
   const bar = document.getElementById('statsBar');
   bar.style.display = 'flex';
-  document.getElementById('statTokens').textContent = s.total_tokens || 0;
-  document.getElementById('statTime').textContent = (s.elapsed_sec || 0) + 's';
+  document.getElementById('statTokens').textContent = s.total_tokens || streamTokens;
+  document.getElementById('statTime').textContent = (s.elapsed_sec || ((Date.now() - streamStart) / 1000).toFixed(1)) + 's';
   document.getElementById('statTPS').textContent = (s.tokens_per_sec || 0).toFixed(2);
   document.getElementById('statPrompt').textContent = s.prompt_tokens || 0;
-  document.getElementById('statCompletion').textContent = s.completion_tokens || 0;
+  document.getElementById('statCompletion').textContent = s.completion_tokens || streamTokens;
 }
 
 function renderMd(text) {
