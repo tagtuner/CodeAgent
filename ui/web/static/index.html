@@ -361,6 +361,7 @@ function handleEvent(evt) {
         appendTermLineToWorker(wid4, 'Exit code: ' + ec, 'exit-err');
       }
       workerActive = Object.values(workerTabs).some(w => w.state === 'running');
+      if (!workerActive) autoCollapseTerminal();
       break;
     case 'status':
       addMsg('status', evt.content);
@@ -381,6 +382,7 @@ function handleEvent(evt) {
       document.getElementById('stopBtn').style.display = 'none';
       document.getElementById('sendBtn').disabled = false;
       document.getElementById('chatInput').focus();
+      autoCollapseTerminal();
       break;
   }
 }
@@ -417,6 +419,15 @@ function sendMessage() {
 function stopGeneration() {
   if (ws && ws.readyState === 1) {
     ws.send(JSON.stringify({ type: 'cancel' }));
+    if (workerActive) {
+      ws.send(JSON.stringify({ type: 'worker_kill' }));
+      Object.keys(workerTabs).forEach(wid => {
+        if (workerTabs[wid].state === 'running') {
+          updateWorkerState(Number(wid), 'killed');
+          appendTermLineToWorker(Number(wid), 'Cancelled by user', 'exit-err');
+        }
+      });
+    }
   }
   removeTyping();
   finalizeDelta(null);
@@ -426,6 +437,7 @@ function stopGeneration() {
   document.getElementById('stopBtn').style.display = 'none';
   document.getElementById('sendBtn').disabled = false;
   document.getElementById('chatInput').focus();
+  autoCollapseTerminal();
 }
 
 /* ── Terminal Panel (Multi-Worker Tabs) ── */
@@ -543,6 +555,19 @@ function appendTermLineToWorker(wid, text, cls) {
   div.textContent = text;
   body.appendChild(div);
   body.scrollTop = body.scrollHeight;
+}
+
+let _collapseTimer = null;
+function autoCollapseTerminal() {
+  if (_collapseTimer) clearTimeout(_collapseTimer);
+  const hasWorkers = Object.keys(workerTabs).length > 0;
+  if (!hasWorkers) { hideTerminal(); return; }
+  _collapseTimer = setTimeout(() => {
+    const panel = document.getElementById('termPanel');
+    if (panel.classList.contains('visible') && !workerActive) {
+      panel.classList.add('minimized');
+    }
+  }, 3000);
 }
 
 function resetTerminal() {
