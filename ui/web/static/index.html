@@ -264,7 +264,11 @@ function handleEvent(evt) {
       break;
     case 'text':
       removeTyping();
-      finalizeDelta(evt.content);
+      if (_streamBubble) {
+        finalizeDelta(evt.content);
+      } else {
+        addMsg('assistant', evt.content);
+      }
       break;
     case 'tool_start':
       finalizeDelta(null);
