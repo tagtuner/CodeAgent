@@ -23,6 +23,7 @@ from tools.file_ops import ReadFileTool, WriteFileTool, EditFileTool, GlobSearch
 from tools.git_tool import GitStatusTool, GitDiffTool, GitCommitTool
 from tools.oracle import OracleQueryTool, OracleSchemaTool, SqlValidateTool, OracleExplainTool
 from tools.ebs import EBSModuleGuideTool
+from tools.web_search import WebSearchTool, WebFetchTool
 from mcp.client import MCPClient
 from mcp.registry import MCPRegistry
 from skills.manager import SkillManager
@@ -62,6 +63,10 @@ def build_registry(config: Config) -> ToolRegistry:
 
     if tool_cfg.get("ebs", {}).get("enabled", True):
         registry.register(EBSModuleGuideTool())
+
+    if tool_cfg.get("web", {}).get("enabled", True):
+        registry.register(WebSearchTool())
+        registry.register(WebFetchTool())
 
     return registry
 

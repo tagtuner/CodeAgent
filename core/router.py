@@ -3,17 +3,17 @@ import re
 from .llm import LLMClient
 
 TOOL_MAP: dict[str, list[str]] = {
-    "simple": [],
-    "coding": ["bash", "read_file", "write_file", "edit_file", "glob_search"],
-    "ebs": ["bash", "ebs_module_guide", "oracle_query", "oracle_schema", "sql_validate", "oracle_explain"],
-    "system": ["bash", "read_file", "write_file", "git_status", "git_diff", "git_commit"],
+    "simple": ["web_search", "web_fetch"],
+    "coding": ["bash", "read_file", "write_file", "edit_file", "glob_search", "web_search", "web_fetch"],
+    "ebs": ["bash", "ebs_module_guide", "oracle_query", "oracle_schema", "sql_validate", "oracle_explain", "web_search"],
+    "system": ["bash", "read_file", "write_file", "git_status", "git_diff", "git_commit", "web_search", "web_fetch"],
 }
 
 CLASSIFY_PROMPT = """\
 Classify the user message into exactly one category. Reply with ONLY the category name, nothing else.
 
 Categories:
-- simple: greetings, general questions, explanations, no tools needed
+- simple: greetings, general questions, explanations, web searches, looking up information
 - coding: writing code, scripts, files, debugging, programming tasks
 - ebs: Oracle EBS, SQL queries, database tables, PO/AP/AR/GL/INV modules, suppliers, invoices
 - system: server administration, git, services, disk, network, system commands

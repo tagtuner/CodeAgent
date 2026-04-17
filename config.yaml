@@ -49,6 +49,8 @@ tools:
     default_host: ""
     default_port: "1521"
     default_service: ""
+  web:
+    enabled: true
   ebs:
     enabled: true
 
