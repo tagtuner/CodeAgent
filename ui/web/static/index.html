@@ -314,7 +314,7 @@ function sendMessage() {
   processing = true;
   document.getElementById('sendBtn').disabled = true;
   document.getElementById('sendBtn').style.display = 'none';
-  document.getElementById('stopBtn').style.display = '';
+  document.getElementById('stopBtn').style.display = 'inline-block';
   streamStart = Date.now();
   streamTokens = 0;
   resetStats();
@@ -409,7 +409,7 @@ function regenerateMsg(btn) {
   if (text && ws && ws.readyState === 1 && !processing) {
     processing = true;
     document.getElementById('sendBtn').style.display = 'none';
-    document.getElementById('stopBtn').style.display = '';
+    document.getElementById('stopBtn').style.display = 'inline-block';
     document.getElementById('sendBtn').disabled = true;
     streamStart = Date.now();
     streamTokens = 0;
