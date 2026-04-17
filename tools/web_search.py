@@ -13,7 +13,7 @@ except ImportError:
 
 class WebSearchTool(BaseTool):
     name = "web_search"
-    description = "Search the web using DuckDuckGo. Returns titles, URLs, and snippets. No API key required."
+    description = "Search the web using DuckDuckGo. Returns titles, URLs, and snippets. After getting results, use web_fetch on the best URL to get full content."
     parameters = {
         "type": "object",
         "properties": {

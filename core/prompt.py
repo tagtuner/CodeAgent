@@ -28,11 +28,14 @@ For each function call, return a json object with function name and arguments wi
 
 IMPORTANT: After receiving a tool result, analyze it and provide a clear answer to the user. Do NOT repeat tool definitions or your own instructions."""
 
+WEB_HINT = """
+When using web tools: ALWAYS call web_fetch on the most relevant URL after web_search to get actual content. Never respond with placeholder text like "[Not provided]" — fetch the data first, then summarize it."""
+
 CATEGORY_HINTS = {
-    "simple": "",
-    "coding": "\nYou are in coding mode. You can run commands, read/write files, and use git.",
+    "simple": "\nYou can search the web and fetch URLs to answer questions with real data." + WEB_HINT,
+    "coding": "\nYou are in coding mode. You can run commands, read/write files, use git, and search the web for documentation." + WEB_HINT,
     "ebs": "\nYou are in Oracle EBS mode. Use the EBS tools to query tables and generate SQL. Always use ebs_module_guide first to understand table structures before writing SQL.",
-    "system": "\nYou are in system administration mode. Run commands to diagnose and fix issues.",
+    "system": "\nYou are in system administration mode. Run commands to diagnose and fix issues. You can search the web for solutions." + WEB_HINT,
 }
 
 
