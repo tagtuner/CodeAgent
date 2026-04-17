@@ -115,15 +115,47 @@ def create_app(
             skills_context=_skills_context,
         )
 
+        input_queue: asyncio.Queue = asyncio.Queue()
+
+        async def ws_receiver():
+            try:
+                while True:
+                    raw = await websocket.receive_text()
+                    msg = json.loads(raw)
+                    msg_type = msg.get("type", "message")
+
+                    if msg_type == "tool_response":
+                        await agent.approval_queue.put(msg.get("approved", False))
+                    elif msg_type == "cancel":
+                        agent._cancelled = True
+                        try:
+                            agent.approval_queue.put_nowait(False)
+                        except asyncio.QueueFull:
+                            pass
+                    else:
+                        await input_queue.put(msg)
+            except (WebSocketDisconnect, Exception):
+                await input_queue.put(None)
+
+        receiver = asyncio.create_task(ws_receiver())
+
         try:
             while True:
-                data = await websocket.receive_text()
-                msg = json.loads(data)
+                msg = await input_queue.get()
+                if msg is None:
+                    break
+
                 user_text = msg.get("message", "")
                 if not user_text:
                     continue
 
+                agent._cancelled = False
+                agent.approval_queue = asyncio.Queue()
+
                 async for event in agent.run(user_text):
+                    if agent._cancelled and event.type not in ("status", "done"):
+                        continue
+
                     payload = {"type": event.type, "content": event.content}
                     if event.tool_name:
                         payload["tool_name"] = event.tool_name
@@ -131,17 +163,17 @@ def create_app(
                         payload["tool_args"] = event.tool_args
                     if event.metadata:
                         payload["metadata"] = event.metadata
-                    await websocket.send_text(json.dumps(payload))
+                    try:
+                        await websocket.send_text(json.dumps(payload))
+                    except Exception:
+                        break
 
                 session_dir = config.session.get("dir", "/opt/codeagent/sessions")
                 session.save(session_dir)
 
-        except WebSocketDisconnect:
+        except (WebSocketDisconnect, Exception):
             pass
-        except Exception as e:
-            try:
-                await websocket.send_text(json.dumps({"type": "error", "content": str(e)}))
-            except Exception:
-                pass
+        finally:
+            receiver.cancel()
 
     return app

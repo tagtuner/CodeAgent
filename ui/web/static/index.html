@@ -42,8 +42,9 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
 
 .msg { margin-bottom: 16px; animation: fadeIn 0.2s; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
-.msg-user { display: flex; justify-content: flex-end; }
-.msg-user .msg-bubble { background: #1a3a5c; border: 1px solid #264a6e; border-radius: 12px 12px 2px 12px; max-width: 70%; padding: 10px 14px; }
+.msg-user { display: flex; flex-direction: column; align-items: flex-end; }
+.msg-user .msg-bubble { background: #1a3a5c; border: 1px solid #264a6e; border-radius: 12px 12px 2px 12px; max-width: 70%; padding: 10px 14px; word-break: break-word; white-space: pre-wrap; }
+.msg-assistant { display: flex; flex-direction: column; align-items: flex-start; }
 .msg-assistant .msg-bubble { background: var(--surface); border: 1px solid var(--border); border-radius: 12px 12px 12px 2px; max-width: 85%; padding: 12px 16px; }
 .msg-tool { margin: 4px 0; }
 .msg-tool .msg-bubble { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; font-family: var(--mono); font-size: 12px; max-width: 85%; }
@@ -58,7 +59,23 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
 .msg-bubble p { margin: 4px 0; line-height: 1.5; }
 .msg-tool .msg-bubble { max-width: 95%; }
 .msg-tool .msg-bubble pre { max-height: 250px; font-size: 11px; }
-.msg-user .msg-bubble { word-break: break-word; white-space: pre-wrap; }
+
+.msg-actions { display: none; gap: 3px; margin-top: 5px; }
+.msg:hover .msg-actions { display: flex; }
+.msg-user .msg-actions { justify-content: flex-end; }
+.msg-actions button { background: var(--surface2); border: 1px solid transparent; color: var(--text2); cursor: pointer; padding: 3px 8px; border-radius: 4px; font-size: 11px; line-height: 1.4; transition: all 0.12s; }
+.msg-actions button:hover { border-color: var(--border); color: var(--text); background: var(--border); }
+
+.approval-box { background: var(--surface); border: 1px solid var(--yellow); border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; animation: fadeIn 0.2s; max-width: 85%; }
+.approval-title { color: var(--yellow); font-weight: 600; font-size: 13px; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+.approval-box .tool-info { font-size: 13px; margin-bottom: 6px; color: var(--text); }
+.approval-box pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 11px; font-family: var(--mono); margin: 8px 0; overflow-x: auto; max-height: 200px; overflow-y: auto; }
+.approval-btns { display: flex; gap: 8px; margin-top: 10px; }
+.approval-btns button { padding: 6px 18px; border-radius: 6px; font-weight: 600; cursor: pointer; border: none; font-size: 13px; transition: opacity 0.12s; }
+.btn-allow { background: var(--green); color: #000; }
+.btn-allow:hover { opacity: 0.85; }
+.btn-deny { background: var(--red); color: #fff; }
+.btn-deny:hover { opacity: 0.85; }
 
 .stats-bar { display: flex; gap: 16px; padding: 6px 20px; background: var(--surface2); border-top: 1px solid var(--border); font-size: 12px; color: var(--text2); align-items: center; flex-shrink: 0; }
 .stats-bar .stat { display: flex; align-items: center; gap: 4px; }
@@ -76,6 +93,8 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
 .send-btn { background: var(--accent); color: #000; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 14px; }
 .send-btn:hover { opacity: 0.9; }
 .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.stop-btn { background: var(--red); color: #fff; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 14px; display: none; }
+.stop-btn:hover { opacity: 0.85; }
 
 .typing { display: inline-flex; gap: 4px; padding: 8px 14px; }
 .typing span { width: 6px; height: 6px; border-radius: 50%; background: var(--text2); animation: blink 1.4s infinite both; }
@@ -129,6 +148,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
         <input type="text" id="chatInput" placeholder="Type a message..." autocomplete="off"
                onkeydown="if(event.key==='Enter')sendMessage()">
         <button class="send-btn" id="sendBtn" onclick="sendMessage()">Send</button>
+        <button class="stop-btn" id="stopBtn" onclick="stopGeneration()">Stop</button>
       </div>
     </div>
   </div>
@@ -166,19 +186,16 @@ async function loadSessions() {
       const div = document.createElement('div');
       div.className = 'session-item' + (s.id === sessionId ? ' active' : '');
       div.dataset.sid = s.id;
-
       const txt = document.createElement('span');
       txt.className = 'session-text';
       txt.textContent = s.preview || s.id;
       txt.title = s.id;
       txt.onclick = () => switchSession(s.id);
-
       const del = document.createElement('button');
       del.className = 'del-btn';
       del.innerHTML = '&#10005;';
       del.title = 'Delete session';
       del.onclick = (e) => { e.stopPropagation(); deleteSession(s.id); };
-
       div.appendChild(txt);
       div.appendChild(del);
       el.appendChild(div);
@@ -211,12 +228,8 @@ async function switchSession(id) {
     if (data.messages) {
       let count = 0;
       data.messages.forEach(m => {
-        if (m.role === 'user') {
-          addMsg('user', m.content);
-          count++;
-        } else if (m.role === 'assistant') {
-          addMsg('assistant', m.content);
-        }
+        if (m.role === 'user') { addMsg('user', m.content); count++; }
+        else if (m.role === 'assistant') { addMsg('assistant', m.content); }
       });
       document.getElementById('msgCount').textContent = count;
     }
@@ -229,9 +242,7 @@ async function deleteSession(id) {
   if (!confirm('Delete this session?')) return;
   try {
     await fetch(`/api/session/${id}`, { method: 'DELETE' });
-    if (sessionId === id) {
-      await newSession();
-    }
+    if (sessionId === id) await newSession();
     loadSessions();
   } catch (e) {
     addMsg('error', 'Failed to delete session: ' + e);
@@ -242,17 +253,10 @@ function connectWS() {
   if (ws) { ws.close(); ws = null; }
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${proto}//${location.host}/ws/${sessionId}`);
-  ws.onmessage = (e) => {
-    const data = JSON.parse(e.data);
-    handleEvent(data);
-  };
+  ws.onmessage = (e) => handleEvent(JSON.parse(e.data));
   ws.onerror = () => addMsg('error', 'WebSocket error');
-  ws.onclose = () => {
-    document.getElementById('statusDot').classList.add('offline');
-  };
-  ws.onopen = () => {
-    document.getElementById('statusDot').classList.remove('offline');
-  };
+  ws.onclose = () => document.getElementById('statusDot').classList.add('offline');
+  ws.onopen = () => document.getElementById('statusDot').classList.remove('offline');
 }
 
 function handleEvent(evt) {
@@ -264,20 +268,22 @@ function handleEvent(evt) {
       break;
     case 'text':
       removeTyping();
-      if (_streamBubble) {
-        finalizeDelta(evt.content);
-      } else {
-        addMsg('assistant', evt.content);
-      }
+      if (_streamBubble) { finalizeDelta(evt.content); }
+      else { addMsg('assistant', evt.content); }
+      break;
+    case 'tool_approval':
+      finalizeDelta(null);
+      removeTyping();
+      showApprovalDialog(evt.tool_name, evt.tool_args);
       break;
     case 'tool_start':
       finalizeDelta(null);
       updateLiveStats();
-      addMsg('tool', `Calling <b>${evt.tool_name}</b>`, 'tool-start');
+      addMsg('tool', `Calling <b>${escHtml(evt.tool_name)}</b>`, 'tool-start');
       break;
     case 'tool_result':
       updateLiveStats();
-      addMsg('tool', `<b>${evt.tool_name}</b> result:\n${escHtml(evt.content)}`, 'tool-result');
+      addMsg('tool', `<b>${escHtml(evt.tool_name)}</b> result:\n${escHtml(evt.content)}`, 'tool-result');
       break;
     case 'status':
       addMsg('status', evt.content);
@@ -291,7 +297,10 @@ function handleEvent(evt) {
       break;
     case 'done':
       removeTyping();
+      finalizeDelta(null);
       processing = false;
+      document.getElementById('sendBtn').style.display = '';
+      document.getElementById('stopBtn').style.display = 'none';
       document.getElementById('sendBtn').disabled = false;
       document.getElementById('chatInput').focus();
       break;
@@ -304,6 +313,8 @@ function sendMessage() {
   if (!msg || !ws || ws.readyState !== 1 || processing) return;
   processing = true;
   document.getElementById('sendBtn').disabled = true;
+  document.getElementById('sendBtn').style.display = 'none';
+  document.getElementById('stopBtn').style.display = '';
   streamStart = Date.now();
   streamTokens = 0;
   resetStats();
@@ -315,10 +326,153 @@ function sendMessage() {
   mc.textContent = parseInt(mc.textContent) + 1;
 }
 
+function stopGeneration() {
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'cancel' }));
+  }
+  removeTyping();
+  finalizeDelta(null);
+  processing = false;
+  document.getElementById('sendBtn').style.display = '';
+  document.getElementById('stopBtn').style.display = 'none';
+  document.getElementById('sendBtn').disabled = false;
+  document.getElementById('chatInput').focus();
+}
+
+/* ── Message action buttons ── */
+
+function createActions(role) {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-actions';
+
+  const mkBtn = (label, title, fn) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.title = title;
+    b.onclick = fn;
+    return b;
+  };
+
+  wrap.appendChild(mkBtn('Copy', 'Copy to clipboard', function() { copyMsg(this); }));
+
+  if (role === 'user') {
+    wrap.appendChild(mkBtn('Edit', 'Edit message', function() { editMsg(this); }));
+  }
+  if (role === 'assistant') {
+    wrap.appendChild(mkBtn('Regen', 'Regenerate response', function() { regenerateMsg(this); }));
+  }
+
+  wrap.appendChild(mkBtn('Del', 'Delete message', function() { deleteMsg(this); }));
+  return wrap;
+}
+
+function getMsgEl(btn) {
+  return btn.closest('.msg');
+}
+
+function getMsgText(msgEl) {
+  return msgEl?.dataset?.text || msgEl?.querySelector('.msg-bubble')?.textContent || '';
+}
+
+function copyMsg(btn) {
+  const msgEl = getMsgEl(btn);
+  const text = getMsgText(msgEl);
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = 'OK';
+    setTimeout(() => btn.textContent = orig, 800);
+  });
+}
+
+function editMsg(btn) {
+  const msgEl = getMsgEl(btn);
+  const text = getMsgText(msgEl);
+  document.getElementById('chatInput').value = text;
+  document.getElementById('chatInput').focus();
+}
+
+function deleteMsg(btn) {
+  const msgEl = getMsgEl(btn);
+  if (msgEl) msgEl.remove();
+}
+
+function regenerateMsg(btn) {
+  const msgEl = getMsgEl(btn);
+  if (!msgEl) return;
+  let prev = msgEl.previousElementSibling;
+  while (prev && !prev.classList.contains('msg-user')) {
+    prev = prev.previousElementSibling;
+  }
+  if (!prev) return;
+  const text = getMsgText(prev);
+  msgEl.remove();
+  if (text && ws && ws.readyState === 1 && !processing) {
+    processing = true;
+    document.getElementById('sendBtn').style.display = 'none';
+    document.getElementById('stopBtn').style.display = '';
+    document.getElementById('sendBtn').disabled = true;
+    streamStart = Date.now();
+    streamTokens = 0;
+    resetStats();
+    showTyping();
+    ws.send(JSON.stringify({ message: text }));
+  }
+}
+
+/* ── Tool Approval ── */
+
+function showApprovalDialog(toolName, toolArgs) {
+  const container = document.getElementById('messages');
+  const div = document.createElement('div');
+  div.className = 'msg';
+  div.id = 'approvalDialog';
+  const argsStr = toolArgs ? JSON.stringify(toolArgs, null, 2) : '{}';
+  div.innerHTML =
+    '<div class="approval-box">' +
+      '<div class="approval-title">Tool Approval Required</div>' +
+      '<div class="tool-info"><strong>' + escHtml(toolName) + '</strong></div>' +
+      '<pre>' + escHtml(argsStr) + '</pre>' +
+      '<div class="approval-btns">' +
+        '<button class="btn-allow" onclick="respondApproval(true)">Allow</button>' +
+        '<button class="btn-deny" onclick="respondApproval(false)">Deny</button>' +
+      '</div>' +
+    '</div>';
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function respondApproval(approved) {
+  const dialog = document.getElementById('approvalDialog');
+  if (dialog) {
+    const box = dialog.querySelector('.approval-box');
+    const title = box.querySelector('.approval-title');
+    const btns = box.querySelector('.approval-btns');
+    if (approved) {
+      box.style.borderColor = 'var(--green)';
+      title.textContent = 'Approved';
+      title.style.color = 'var(--green)';
+    } else {
+      box.style.borderColor = 'var(--red)';
+      title.textContent = 'Denied';
+      title.style.color = 'var(--red)';
+    }
+    if (btns) btns.remove();
+    dialog.removeAttribute('id');
+  }
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'tool_response', approved: approved }));
+  }
+}
+
+/* ── Core message rendering ── */
+
 function addMsg(role, content, extraClass) {
   const container = document.getElementById('messages');
   const div = document.createElement('div');
   div.className = `msg msg-${role} ${extraClass || ''}`;
+  if (role === 'user' || role === 'assistant') {
+    div.dataset.text = content;
+  }
   const bubble = document.createElement('div');
   bubble.className = 'msg-bubble';
   if (role === 'tool') {
@@ -337,6 +491,9 @@ function addMsg(role, content, extraClass) {
     bubble.innerHTML = content;
   }
   div.appendChild(bubble);
+  if (role === 'user' || role === 'assistant') {
+    div.appendChild(createActions(role));
+  }
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
 }
@@ -366,10 +523,16 @@ function finalizeDelta(fullText) {
   if (_streamBubble && fullText) {
     _streamBubble.innerHTML = renderMd(fullText);
   }
+  const el = document.getElementById('streamMsg');
+  if (el) {
+    el.dataset.text = fullText || _streamText;
+    el.removeAttribute('id');
+    if (!el.querySelector('.msg-actions')) {
+      el.appendChild(createActions('assistant'));
+    }
+  }
   _streamBubble = null;
   _streamText = '';
-  const el = document.getElementById('streamMsg');
-  if (el) el.removeAttribute('id');
 }
 
 function showTyping() {
@@ -388,7 +551,8 @@ function removeTyping() {
 }
 
 function escHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 function resetStats() {

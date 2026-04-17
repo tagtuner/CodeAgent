@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import json
 import re
 from dataclasses import dataclass
@@ -47,6 +48,8 @@ class Agent:
         self.temperature = config.agent.get("temperature", 0.7)
         self.repeat_penalty = config.agent.get("repeat_penalty", 1.15)
         self.top_p = config.agent.get("top_p", 0.9)
+        self.approval_queue: asyncio.Queue = asyncio.Queue()
+        self._cancelled = False
 
     async def run(self, user_message: str) -> AsyncIterator[AgentEvent]:
         self.session.add_user(user_message)
@@ -66,6 +69,10 @@ class Agent:
         )
 
         for iteration in range(self.max_iterations):
+            if self._cancelled:
+                yield AgentEvent(type="status", content="Cancelled")
+                break
+
             history = self.session.get_history()
             messages = self.prompt_builder.build_messages(system_prompt, history)
 
@@ -77,11 +84,17 @@ class Agent:
                 repeat_penalty=self.repeat_penalty,
                 top_p=self.top_p,
             ):
+                if self._cancelled:
+                    break
                 if chunk.type == "text":
                     full_text += chunk.content
                     yield AgentEvent(type="text_delta", content=chunk.content)
                 elif chunk.type == "done" and chunk.stats:
                     llm_stats = chunk.stats
+
+            if self._cancelled:
+                yield AgentEvent(type="status", content="Cancelled")
+                break
 
             tool_calls = self._extract_tool_calls(full_text)
 
@@ -97,6 +110,32 @@ class Agent:
                 if llm_stats:
                     yield AgentEvent(type="stats", metadata=llm_stats)
                 for tc_name, tc_args in tool_calls:
+                    if self._cancelled:
+                        break
+
+                    yield AgentEvent(
+                        type="tool_approval",
+                        tool_name=tc_name,
+                        tool_args=tc_args,
+                    )
+
+                    try:
+                        approved = await asyncio.wait_for(
+                            self.approval_queue.get(), timeout=120
+                        )
+                    except asyncio.TimeoutError:
+                        approved = False
+
+                    if self._cancelled or not approved:
+                        result_str = "Denied by user"
+                        yield AgentEvent(
+                            type="tool_result",
+                            tool_name=tc_name,
+                            content=result_str,
+                        )
+                        self.session.add_tool_result(tc_name, result_str)
+                        continue
+
                     yield AgentEvent(
                         type="tool_start",
                         tool_name=tc_name,
