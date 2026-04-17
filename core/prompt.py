@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from tools.base import ToolRegistry
 
+from tools.oracle import get_available_dbs
+
 SYSTEM_BASE = """\
 You are CodeAgent, a senior software engineer running on a local server.
 You write clean, production-ready code. Be direct and concise.
@@ -34,7 +36,7 @@ When using web tools: ALWAYS call web_fetch on the most relevant URL after web_s
 CATEGORY_HINTS = {
     "simple": "\nYou can search the web and fetch URLs to answer questions with real data." + WEB_HINT,
     "coding": "\nYou are in coding mode. You can run commands, read/write files, use git, and search the web for documentation." + WEB_HINT,
-    "ebs": "\nYou are in Oracle EBS mode. Use the EBS tools to query tables and generate SQL. Always use ebs_module_guide first to understand table structures before writing SQL.",
+    "ebs": "\nYou are in Oracle EBS mode. Use the EBS tools to query tables and generate SQL. Always use ebs_module_guide first to understand table structures before writing SQL.\n{ebs_db_hint}",
     "system": "\nYou are in system administration mode. Run commands to diagnose and fix issues. You can search the web for solutions." + WEB_HINT,
 }
 
@@ -50,6 +52,13 @@ class PromptBuilder:
         parts = [SYSTEM_BASE]
         hint = CATEGORY_HINTS.get(category, "")
         if hint:
+            if "{ebs_db_hint}" in hint:
+                dbs = get_available_dbs()
+                if dbs:
+                    db_hint = f"Available database connections: {', '.join(dbs)}. Use the 'db' parameter in Oracle tools to specify which database. If user doesn't specify, ask which database to use."
+                else:
+                    db_hint = ""
+                hint = hint.replace("{ebs_db_hint}", db_hint)
             parts.append(hint)
         if skills_context:
             parts.append(f"\n# Active Skills\n{skills_context}")

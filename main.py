@@ -21,7 +21,7 @@ from tools.base import ToolRegistry
 from tools.bash_tool import BashTool
 from tools.file_ops import ReadFileTool, WriteFileTool, EditFileTool, GlobSearchTool
 from tools.git_tool import GitStatusTool, GitDiffTool, GitCommitTool
-from tools.oracle import OracleQueryTool, OracleSchemaTool, SqlValidateTool, OracleExplainTool
+from tools.oracle import OracleQueryTool, OracleSchemaTool, SqlValidateTool, OracleExplainTool, set_oracle_connections
 from tools.ebs import EBSModuleGuideTool
 from tools.web_search import WebSearchTool, WebFetchTool
 from mcp.client import MCPClient
@@ -56,6 +56,7 @@ def build_registry(config: Config) -> ToolRegistry:
         registry.register(GitCommitTool())
 
     if tool_cfg.get("oracle", {}).get("enabled", True):
+        set_oracle_connections(tool_cfg.get("oracle", {}))
         registry.register(OracleQueryTool())
         registry.register(OracleSchemaTool())
         registry.register(SqlValidateTool())

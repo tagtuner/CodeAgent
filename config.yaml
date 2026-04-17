@@ -46,9 +46,24 @@ tools:
     enabled: true
   oracle:
     enabled: true
-    default_host: ""
-    default_port: "1521"
-    default_service: ""
+    default_connection: dev
+    connections:
+      prod:
+        label: "Production EBS"
+        hostname: ""
+        host: ""
+        port: "1521"
+        service: ""
+        username: ""
+        password: ""
+      dev:
+        label: "Dev/Test EBS"
+        hostname: ""
+        host: ""
+        port: "1521"
+        service: ""
+        username: ""
+        password: ""
   web:
     enabled: true
   ebs:
