@@ -78,7 +78,7 @@ class WebFetchTool(BaseTool):
         "required": ["url"],
     }
 
-    async def execute(self, url: str, max_chars: int = 6000) -> str:
+    async def execute(self, url: str, max_chars: int = 3000) -> str:
         if not httpx:
             return "Error: httpx not installed"
         max_chars = min(max_chars, 15000)
