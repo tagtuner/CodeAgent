@@ -65,3 +65,7 @@ class Config:
     @property
     def fast_model(self) -> ModelConfig:
         return self.models.get("fast", self.main_model)
+
+    @property
+    def opus_model(self) -> ModelConfig | None:
+        return self.models.get("opus")

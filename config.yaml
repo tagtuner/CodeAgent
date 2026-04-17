@@ -9,6 +9,11 @@ models:
     name: qwen2.5-1.5b
     ctx_size: 8192
     max_output: 512
+  opus:
+    url: http://127.0.0.1:8085/v1
+    name: qwen3.5-27b-opus
+    ctx_size: 16384
+    max_output: 4096
 
 router:
   model: fast

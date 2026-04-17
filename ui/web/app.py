@@ -19,6 +19,7 @@ _config: Config | None = None
 _registry: ToolRegistry | None = None
 _llm_main: LLMClient | None = None
 _llm_fast: LLMClient | None = None
+_llm_opus: LLMClient | None = None
 _skills_context: str = ""
 _sessions: dict[str, Session] = {}
 
@@ -28,7 +29,7 @@ def create_app(
     registry: ToolRegistry,
     skills_context: str = "",
 ) -> FastAPI:
-    global _config, _registry, _llm_main, _llm_fast, _skills_context
+    global _config, _registry, _llm_main, _llm_fast, _llm_opus, _skills_context
     _config = config
     _registry = registry
     _skills_context = skills_context
@@ -37,10 +38,12 @@ def create_app(
 
     @app.on_event("startup")
     async def startup():
-        global _llm_main, _llm_fast
+        global _llm_main, _llm_fast, _llm_opus
         _llm_main = LLMClient(config.main_model)
         if "fast" in config.models:
             _llm_fast = LLMClient(config.fast_model)
+        if config.opus_model:
+            _llm_opus = LLMClient(config.opus_model)
 
     @app.on_event("shutdown")
     async def shutdown():
@@ -48,6 +51,8 @@ def create_app(
             await _llm_main.close()
         if _llm_fast:
             await _llm_fast.close()
+        if _llm_opus:
+            await _llm_opus.close()
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
@@ -110,6 +115,7 @@ def create_app(
             config=config,
             llm_main=_llm_main,
             llm_fast=_llm_fast,
+            llm_opus=_llm_opus,
             registry=_registry,
             session=session,
             skills_context=_skills_context,

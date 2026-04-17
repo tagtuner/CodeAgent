@@ -36,10 +36,12 @@ class Agent:
         registry: ToolRegistry,
         session: Session,
         skills_context: str = "",
+        llm_opus: LLMClient | None = None,
     ):
         self.config = config
         self.llm_main = llm_main
         self.llm_fast = llm_fast
+        self.llm_opus = llm_opus
         self.registry = registry
         self.router = Router(llm_fast)
         self.prompt_builder = PromptBuilder()
@@ -70,6 +72,8 @@ class Agent:
             category, self.registry, tool_names, self.skills_context
         )
 
+        llm = self.llm_opus if self.llm_opus and category in ("coding", "ebs") else self.llm_main
+
         for iteration in range(self.max_iterations):
             if self._cancelled:
                 yield AgentEvent(type="status", content="Cancelled")
@@ -80,7 +84,7 @@ class Agent:
 
             full_text = ""
             llm_stats = None
-            async for chunk in self.llm_main.stream_chat(
+            async for chunk in llm.stream_chat(
                 messages,
                 temperature=self.temperature,
                 repeat_penalty=self.repeat_penalty,
@@ -195,7 +199,10 @@ class Agent:
         is_greeting = len(message) < 30 and not any(
             w in msg_lower for w in ("draft", "write", "email", "letter", "explain", "summarize", "translate")
         )
-        llm = (self.llm_fast or self.llm_main) if is_greeting else self.llm_main
+        if is_greeting:
+            llm = self.llm_fast or self.llm_main
+        else:
+            llm = self.llm_opus or self.llm_main
         max_tok = 200 if is_greeting else 1000
 
         resp = await llm.chat(
