@@ -10,7 +10,7 @@ from core.llm import LLMClient, Chunk
 from core.prompt import PromptBuilder
 from core.session import Session
 from core.router import Router
-from core.worker import SubWorker
+from core.worker import WorkerPool
 from tools.base import ToolRegistry
 
 TOOL_CALL_RE = re.compile(r"<(?:tool_call|tools)>\s*(\{.*?\})\s*</(?:tool_call|tools)>", re.DOTALL)
@@ -51,7 +51,7 @@ class Agent:
         self.top_p = config.agent.get("top_p", 0.9)
         self.approval_queue: asyncio.Queue = asyncio.Queue()
         self._cancelled = False
-        self.worker: SubWorker | None = None
+        self.worker_pool = WorkerPool()
 
     async def run(self, user_message: str) -> AsyncIterator[AgentEvent]:
         self.session.add_user(user_message)
@@ -140,27 +140,31 @@ class Agent:
 
                     if tc_name == "bash":
                         command = tc_args.get("command", "")
-                        if not self.worker:
-                            self.worker = SubWorker()
-                        yield AgentEvent(type="worker_start")
-                        yield AgentEvent(type="worker_cmd", content=command)
+                        slot = self.worker_pool.create()
+                        if slot is None:
+                            result_str = f"Max {WorkerPool.MAX_WORKERS} parallel workers reached. Wait for one to finish."
+                            yield AgentEvent(type="error", content=result_str)
+                        else:
+                            wid, worker = slot
+                            yield AgentEvent(type="worker_start", metadata={"worker_id": wid})
+                            yield AgentEvent(type="worker_cmd", content=command, metadata={"worker_id": wid})
 
-                        output_lines = []
-                        async for line in self.worker.execute(command):
-                            if self._cancelled:
-                                await self.worker.kill()
-                                break
-                            output_lines.append(line)
-                            yield AgentEvent(type="worker_output", content=line)
+                            output_lines = []
+                            async for line in worker.execute(command):
+                                if self._cancelled:
+                                    await worker.kill()
+                                    break
+                                output_lines.append(line)
+                                yield AgentEvent(type="worker_output", content=line, metadata={"worker_id": wid})
 
-                        ec = self.worker.exit_code if self.worker and self.worker.exit_code is not None else -1
-                        result_str = "\n".join(output_lines)
-                        if ec != 0:
-                            result_str += f"\n[exit_code: {ec}]"
-                        if len(result_str) > 4000:
-                            result_str = result_str[:4000] + "\n... (truncated)"
+                            ec = worker.exit_code if worker.exit_code is not None else -1
+                            result_str = "\n".join(output_lines)
+                            if ec != 0:
+                                result_str += f"\n[exit_code: {ec}]"
+                            if len(result_str) > 4000:
+                                result_str = result_str[:4000] + "\n... (truncated)"
 
-                        yield AgentEvent(type="worker_done", metadata={"exit_code": ec})
+                            yield AgentEvent(type="worker_done", metadata={"worker_id": wid, "exit_code": ec})
                     else:
                         yield AgentEvent(
                             type="tool_start",

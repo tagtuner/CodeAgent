@@ -82,12 +82,25 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
 .terminal-panel.minimized { max-height: 34px; overflow: hidden; }
 .term-toolbar { display: flex; align-items: center; padding: 5px 12px; background: #1a1a2e; border-bottom: 1px solid #2a2a3e; gap: 8px; flex-shrink: 0; }
 .term-title { font-size: 12px; font-weight: 600; color: var(--accent); font-family: var(--mono); }
-.term-status { font-size: 11px; color: var(--text2); flex: 1; font-family: var(--mono); }
+.term-status { font-size: 11px; color: var(--text2); font-family: var(--mono); }
 .term-btn { background: none; border: 1px solid #333; color: var(--text2); cursor: pointer; padding: 1px 8px; border-radius: 3px; font-size: 11px; font-family: var(--mono); transition: all 0.12s; }
 .term-btn:hover { color: var(--text); border-color: var(--accent); }
 .term-kill { color: var(--red); border-color: #442; }
 .term-kill:hover { border-color: var(--red); }
-.term-body { overflow-y: auto; padding: 8px 12px; font-family: var(--mono); font-size: 12px; line-height: 1.6; color: #c8c8c8; flex: 1; }
+.term-tabs { display: flex; gap: 0; overflow-x: auto; flex: 1; margin: 0 4px; }
+.term-tab { display: flex; align-items: center; gap: 4px; padding: 2px 10px; background: #12121e; border: 1px solid #2a2a3e; border-bottom: none; border-radius: 4px 4px 0 0; cursor: pointer; font-size: 11px; font-family: var(--mono); color: var(--text2); white-space: nowrap; transition: all 0.12s; }
+.term-tab:hover { background: #1e1e32; color: var(--text); }
+.term-tab.active { background: #1a1a2e; color: var(--accent); border-color: var(--accent); border-bottom-color: transparent; }
+.term-tab .tab-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.term-tab .tab-dot.running { background: var(--yellow); }
+.term-tab .tab-dot.done { background: var(--green); }
+.term-tab .tab-dot.error { background: var(--red); }
+.term-tab .tab-dot.idle { background: var(--text2); }
+.term-tab .tab-x { font-size: 12px; color: var(--text2); cursor: pointer; padding: 0 2px; opacity: 0.6; }
+.term-tab .tab-x:hover { color: var(--red); opacity: 1; }
+.term-body-wrap { flex: 1; position: relative; overflow: hidden; }
+.term-body { overflow-y: auto; padding: 8px 12px; font-family: var(--mono); font-size: 12px; line-height: 1.6; color: #c8c8c8; position: absolute; inset: 0; display: none; }
+.term-body.active { display: block; }
 .term-cmd { color: var(--green); font-weight: 600; margin-top: 6px; }
 .term-cmd::before { content: '$ '; color: var(--accent); font-weight: 400; }
 .term-line { color: #d0d0d0; }
@@ -156,13 +169,14 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
 
     <div class="terminal-panel" id="termPanel">
       <div class="term-toolbar">
-        <span class="term-title">Terminal</span>
+        <span class="term-title">Workers</span>
+        <div class="term-tabs" id="termTabs"></div>
         <span class="term-status" id="termStatus">idle</span>
         <button class="term-btn" onclick="toggleTerminal()" title="Minimize/Expand">_</button>
-        <button class="term-btn" onclick="clearTerminal()" title="Clear">C</button>
-        <button class="term-btn term-kill" onclick="killWorker()" title="Kill process">X</button>
+        <button class="term-btn" onclick="clearActiveTab()" title="Clear">C</button>
+        <button class="term-btn term-kill" onclick="killActiveWorker()" title="Kill active">X</button>
       </div>
-      <div class="term-body" id="termBody"></div>
+      <div class="term-body-wrap" id="termBodyWrap"></div>
     </div>
 
     <div class="stats-bar" id="statsBar" style="display:none">
@@ -190,6 +204,8 @@ let processing = false;
 let streamStart = 0;
 let streamTokens = 0;
 let workerActive = false;
+let workerTabs = {};
+let activeTabId = null;
 
 async function init() {
   try {
@@ -240,6 +256,7 @@ async function newSession() {
     connectWS();
     document.getElementById('messages').innerHTML = '';
     document.getElementById('msgCount').textContent = '0';
+    resetTerminal();
     hideTerminal();
     addMsg('status', 'New session started — ' + sessionId);
   } catch (e) {
@@ -251,6 +268,7 @@ async function switchSession(id) {
   sessionId = id;
   connectWS();
   document.getElementById('messages').innerHTML = '';
+  resetTerminal();
   hideTerminal();
   document.querySelectorAll('.session-item').forEach(el => {
     el.classList.toggle('active', el.dataset.sid === id);
@@ -318,25 +336,31 @@ function handleEvent(evt) {
       addMsg('tool', '<b>' + escHtml(evt.tool_name) + '</b> result:\n' + escHtml(evt.content), 'tool-result');
       break;
     case 'worker_start':
+      var wid = evt.metadata ? evt.metadata.worker_id : 1;
       showTerminal();
+      ensureWorkerTab(wid);
+      switchTab(wid);
+      updateWorkerState(wid, 'running');
       workerActive = true;
-      updateTermStatus('running');
       break;
     case 'worker_cmd':
-      appendTermLine(evt.content, 'cmd');
+      var wid2 = evt.metadata ? evt.metadata.worker_id : activeTabId || 1;
+      appendTermLineToWorker(wid2, evt.content, 'cmd');
       break;
     case 'worker_output':
-      appendTermLine(evt.content, 'line');
+      var wid3 = evt.metadata ? evt.metadata.worker_id : activeTabId || 1;
+      appendTermLineToWorker(wid3, evt.content, 'line');
       break;
     case 'worker_done':
-      workerActive = false;
-      updateTermStatus('done');
+      var wid4 = evt.metadata ? evt.metadata.worker_id : activeTabId || 1;
       var ec = evt.metadata ? evt.metadata.exit_code : -1;
+      updateWorkerState(wid4, ec === 0 ? 'done' : 'error');
       if (ec === 0) {
-        appendTermLine('Done (exit 0)', 'exit-ok');
+        appendTermLineToWorker(wid4, 'Done (exit 0)', 'exit-ok');
       } else {
-        appendTermLine('Exit code: ' + ec, 'exit-err');
+        appendTermLineToWorker(wid4, 'Exit code: ' + ec, 'exit-err');
       }
+      workerActive = Object.values(workerTabs).some(w => w.state === 'running');
       break;
     case 'status':
       addMsg('status', evt.content);
@@ -404,7 +428,7 @@ function stopGeneration() {
   document.getElementById('chatInput').focus();
 }
 
-/* ── Terminal Panel ── */
+/* ── Terminal Panel (Multi-Worker Tabs) ── */
 
 function showTerminal() {
   const panel = document.getElementById('termPanel');
@@ -422,21 +446,98 @@ function toggleTerminal() {
   document.getElementById('termPanel').classList.toggle('minimized');
 }
 
-function clearTerminal() {
-  document.getElementById('termBody').innerHTML = '';
+function ensureWorkerTab(wid) {
+  if (workerTabs[wid]) return;
+  const wrap = document.getElementById('termBodyWrap');
+  const body = document.createElement('div');
+  body.className = 'term-body';
+  body.id = 'termBody_' + wid;
+  wrap.appendChild(body);
+
+  workerTabs[wid] = { state: 'idle', el: body };
+  renderTabs();
+  switchTab(wid);
 }
 
-function killWorker() {
-  if (ws && ws.readyState === 1) {
-    ws.send(JSON.stringify({ type: 'worker_kill' }));
+function renderTabs() {
+  const container = document.getElementById('termTabs');
+  container.innerHTML = '';
+  const ids = Object.keys(workerTabs).map(Number).sort((a,b) => a - b);
+  ids.forEach(wid => {
+    const info = workerTabs[wid];
+    const tab = document.createElement('div');
+    tab.className = 'term-tab' + (wid === activeTabId ? ' active' : '');
+    tab.dataset.wid = wid;
+
+    const dot = document.createElement('span');
+    dot.className = 'tab-dot ' + (info.state || 'idle');
+    tab.appendChild(dot);
+
+    const label = document.createElement('span');
+    label.textContent = 'W' + wid;
+    tab.appendChild(label);
+
+    const x = document.createElement('span');
+    x.className = 'tab-x';
+    x.innerHTML = '&#10005;';
+    x.onclick = function(e) { e.stopPropagation(); killWorkerById(wid); };
+    tab.appendChild(x);
+
+    tab.onclick = function() { switchTab(wid); };
+    container.appendChild(tab);
+  });
+}
+
+function switchTab(wid) {
+  activeTabId = wid;
+  Object.keys(workerTabs).forEach(id => {
+    const info = workerTabs[id];
+    if (info.el) info.el.classList.toggle('active', Number(id) === wid);
+  });
+  renderTabs();
+  const info = workerTabs[wid];
+  if (info) updateTermStatusFromState(info.state);
+}
+
+function updateWorkerState(wid, state) {
+  if (!workerTabs[wid]) return;
+  workerTabs[wid].state = state;
+  renderTabs();
+  if (wid === activeTabId) updateTermStatusFromState(state);
+}
+
+function updateTermStatusFromState(state) {
+  const el = document.getElementById('termStatus');
+  if (state === 'running') { el.textContent = 'running...'; el.style.color = 'var(--yellow)'; }
+  else if (state === 'done') { el.textContent = 'completed'; el.style.color = 'var(--green)'; }
+  else if (state === 'killed') { el.textContent = 'killed'; el.style.color = 'var(--red)'; }
+  else if (state === 'error') { el.textContent = 'error'; el.style.color = 'var(--red)'; }
+  else { el.textContent = 'idle'; el.style.color = 'var(--text2)'; }
+}
+
+function clearActiveTab() {
+  if (activeTabId && workerTabs[activeTabId]) {
+    workerTabs[activeTabId].el.innerHTML = '';
   }
-  workerActive = false;
-  updateTermStatus('killed');
-  appendTermLine('Process killed by user', 'exit-err');
 }
 
-function appendTermLine(text, cls) {
-  const body = document.getElementById('termBody');
+function killActiveWorker() {
+  if (activeTabId) killWorkerById(activeTabId);
+}
+
+function killWorkerById(wid) {
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'worker_kill', worker_id: wid }));
+  }
+  updateWorkerState(wid, 'killed');
+  appendTermLineToWorker(wid, 'Process killed by user', 'exit-err');
+  workerActive = Object.values(workerTabs).some(w => w.state === 'running');
+}
+
+function appendTermLineToWorker(wid, text, cls) {
+  ensureWorkerTab(wid);
+  const body = workerTabs[wid].el;
+  if (!body) return;
   const div = document.createElement('div');
   div.className = 'term-' + cls;
   div.textContent = text;
@@ -444,21 +545,12 @@ function appendTermLine(text, cls) {
   body.scrollTop = body.scrollHeight;
 }
 
-function updateTermStatus(state) {
-  const el = document.getElementById('termStatus');
-  if (state === 'running') {
-    el.textContent = 'running...';
-    el.style.color = 'var(--yellow)';
-  } else if (state === 'done') {
-    el.textContent = 'completed';
-    el.style.color = 'var(--green)';
-  } else if (state === 'killed') {
-    el.textContent = 'killed';
-    el.style.color = 'var(--red)';
-  } else {
-    el.textContent = 'idle';
-    el.style.color = 'var(--text2)';
-  }
+function resetTerminal() {
+  workerTabs = {};
+  activeTabId = null;
+  document.getElementById('termTabs').innerHTML = '';
+  document.getElementById('termBodyWrap').innerHTML = '';
+  updateTermStatusFromState('idle');
 }
 
 /* ── Message action buttons ── */

@@ -134,13 +134,16 @@ def create_app(
                         except asyncio.QueueFull:
                             pass
                     elif msg_type == "worker_kill":
-                        if agent.worker:
-                            await agent.worker.kill()
-                        agent._cancelled = True
-                        try:
-                            agent.approval_queue.put_nowait(False)
-                        except asyncio.QueueFull:
-                            pass
+                        kill_id = msg.get("worker_id")
+                        if kill_id and agent.worker_pool:
+                            await agent.worker_pool.kill(kill_id)
+                        elif agent.worker_pool:
+                            await agent.worker_pool.kill_all()
+                            agent._cancelled = True
+                            try:
+                                agent.approval_queue.put_nowait(False)
+                            except asyncio.QueueFull:
+                                pass
                     elif msg_type == "mid_task_query":
                         await mid_task_queue.put(msg)
                     else:
@@ -159,14 +162,12 @@ def create_app(
                     if not user_text:
                         continue
 
-                    buffer = ""
-                    cmd = ""
-                    if agent.worker:
-                        buffer = agent.worker.get_buffer(last_n=30)
-                        cmd = agent.worker.current_cmd or ""
+                    buffers = ""
+                    if agent.worker_pool:
+                        buffers = agent.worker_pool.all_buffers(last_n=20)
 
                     llm = _llm_fast or _llm_main
-                    ctx = f"Currently executing: `{cmd}`\nRecent terminal output:\n```\n{buffer}\n```" if buffer else "No command currently running."
+                    ctx = f"Active workers output:\n```\n{buffers}\n```" if buffers else "No command currently running."
                     try:
                         resp = await llm.chat(
                             messages=[
@@ -228,7 +229,7 @@ def create_app(
         finally:
             receiver.cancel()
             mid_handler.cancel()
-            if agent.worker:
-                await agent.worker.close()
+            if agent.worker_pool:
+                await agent.worker_pool.close_all()
 
     return app

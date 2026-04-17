@@ -93,3 +93,51 @@ class SubWorker:
             except asyncio.TimeoutError:
                 self.process.kill()
         self.process = None
+
+
+class WorkerPool:
+    """Manages up to MAX_WORKERS parallel SubWorker instances."""
+
+    MAX_WORKERS = 5
+
+    def __init__(self, work_dir: str = "/tmp/codeagent-worker"):
+        self.work_dir = work_dir
+        self.workers: dict[int, SubWorker] = {}
+        self._next_id = 1
+
+    def create(self) -> tuple[int, SubWorker] | None:
+        if len(self.workers) >= self.MAX_WORKERS:
+            return None
+        wid = self._next_id
+        self._next_id += 1
+        w = SubWorker(work_dir=f"{self.work_dir}/w{wid}")
+        self.workers[wid] = w
+        return wid, w
+
+    def get(self, worker_id: int) -> SubWorker | None:
+        return self.workers.get(worker_id)
+
+    def active_count(self) -> int:
+        return sum(1 for w in self.workers.values() if w.state == "running")
+
+    def all_buffers(self, last_n: int = 20) -> str:
+        parts = []
+        for wid, w in self.workers.items():
+            if w.buffer:
+                cmd = w.current_cmd or "(finished)"
+                parts.append(f"[W{wid}: {cmd}]\n{w.get_buffer(last_n)}")
+        return "\n\n".join(parts)
+
+    async def kill(self, worker_id: int):
+        w = self.workers.get(worker_id)
+        if w:
+            await w.kill()
+
+    async def kill_all(self):
+        for w in self.workers.values():
+            await w.kill()
+
+    async def close_all(self):
+        for w in self.workers.values():
+            await w.close()
+        self.workers.clear()
