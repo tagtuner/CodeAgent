@@ -54,8 +54,10 @@ class Agent:
         self.approval_queue: asyncio.Queue = asyncio.Queue()
         self._cancelled = False
         self.worker_pool = WorkerPool()
+        self._last_shell_output: str = ""
 
     async def run(self, user_message: str) -> AsyncIterator[AgentEvent]:
+        self._last_shell_output = ""
         self.session.add_user(user_message)
 
         category = await self.router.classify(user_message)
@@ -119,6 +121,8 @@ class Agent:
                     if self._cancelled:
                         break
 
+                    tc_args = self._fix_placeholder_paths(tc_name, tc_args)
+
                     yield AgentEvent(
                         type="tool_approval",
                         tool_name=tc_name,
@@ -167,6 +171,8 @@ class Agent:
                                 result_str += f"\n[exit_code: {ec}]"
                             if len(result_str) > 4000:
                                 result_str = result_str[:4000] + "\n... (truncated)"
+
+                            self._last_shell_output = result_str
 
                             yield AgentEvent(type="worker_done", metadata={"worker_id": wid, "exit_code": ec})
                     else:
@@ -235,6 +241,37 @@ class Agent:
             if calls:
                 break
         return calls
+
+    def _fix_placeholder_paths(self, tool_name: str, args: dict) -> dict:
+        if tool_name not in ("read_file", "edit_file", "write_file"):
+            return args
+        path = args.get("path") or args.get("file_path") or ""
+        if not path or ("<" not in path and ">" not in path):
+            return args
+        resolved = self._path_from_last_shell_output(path)
+        if not resolved:
+            return args
+        out = dict(args)
+        out["path"] = resolved
+        return out
+
+    def _path_from_last_shell_output(self, bad_path: str) -> str:
+        text = self._last_shell_output
+        if not text:
+            return ""
+        want_yaml = "yaml" in bad_path.lower() or "config" in bad_path.lower()
+        pat = r"/(?:opt|home|root|etc|var|tmp|usr)(?:/[\w.\-]+)+\.ya?ml"
+        yaml_paths = re.findall(pat, text, re.I)
+        if want_yaml and yaml_paths:
+            return yaml_paths[-1]
+        if yaml_paths:
+            return yaml_paths[-1]
+        pat2 = r"/(?:opt|home|root|etc|var|tmp|usr)(?:/[\w.\-]+)+"
+        paths = re.findall(pat2, text)
+        paths = [p for p in paths if not p.endswith(":") and len(p) > 1]
+        if paths:
+            return paths[-1]
+        return ""
 
     def _clean_response(self, text: str) -> str:
         text = TOOL_CALL_RE.sub("", text)
