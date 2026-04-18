@@ -211,21 +211,33 @@ def create_app(
                 agent._cancelled = False
                 agent.approval_queue = asyncio.Queue()
 
-                async for event in agent.run(user_text):
-                    if agent._cancelled and event.type not in ("status", "done", "worker_done"):
-                        continue
+                try:
+                    async for event in agent.run(user_text):
+                        if agent._cancelled and event.type not in ("status", "done", "worker_done"):
+                            continue
 
-                    payload = {"type": event.type, "content": event.content}
-                    if event.tool_name:
-                        payload["tool_name"] = event.tool_name
-                    if event.tool_args:
-                        payload["tool_args"] = event.tool_args
-                    if event.metadata:
-                        payload["metadata"] = event.metadata
+                        payload = {"type": event.type, "content": event.content}
+                        if event.tool_name:
+                            payload["tool_name"] = event.tool_name
+                        if event.tool_args:
+                            payload["tool_args"] = event.tool_args
+                        if event.metadata:
+                            payload["metadata"] = event.metadata
+                        try:
+                            await websocket.send_text(json.dumps(payload))
+                        except Exception:
+                            break
+                except Exception as e:
                     try:
-                        await websocket.send_text(json.dumps(payload))
+                        await websocket.send_text(json.dumps({"type": "error", "content": str(e)}))
                     except Exception:
-                        break
+                        pass
+                finally:
+                    # Ensures UI unlocks if agent.run errors before yielding done (duplicate done is harmless).
+                    try:
+                        await websocket.send_text(json.dumps({"type": "done"}))
+                    except Exception:
+                        pass
 
                 session_dir = config.session.get("dir", "/opt/codeagent/sessions")
                 session.save(session_dir)

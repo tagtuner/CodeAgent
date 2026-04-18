@@ -35,7 +35,8 @@ For each function call, return a json object with function name and arguments wi
 {{"name": "function_name", "arguments": {{"param": "value"}}}}
 </tool_call>
 
-IMPORTANT: After receiving a tool result, analyze it and provide a clear answer to the user. Do NOT repeat tool definitions or your own instructions."""
+IMPORTANT: After receiving a tool result, analyze it and provide a clear answer to the user. Do NOT repeat tool definitions or your own instructions.
+Unless the user explicitly asks for a full dump, long essay, or line-by-line listing: keep the answer concise (short paragraphs or bullet summary). For large file reads, summarize what matters instead of restating the entire file."""
 
 WEB_HINT = """
 When using web tools: ALWAYS call web_fetch on the most relevant URL after web_search to get actual content. Never respond with placeholder text like "[Not provided]" — fetch the data first, then summarize it."""

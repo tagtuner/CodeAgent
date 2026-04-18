@@ -21,6 +21,8 @@ Most AI coding assistants (OpenCode, Cursor, etc.) waste **14,000+ tokens** on s
 - **Live Token Stats**: Real-time token count, elapsed time, tokens/sec — resets per request, just like llama.cpp's UI
 - **Session Management**: Save/load/delete conversation history with token-aware trimming
 - **Mid-Task Queries**: Ask questions while workers are running — AI responds based on live terminal state
+- **Web UI responsiveness**: Streams assistant text as plain monospace during generation; markdown is applied when the assistant message completes. After a tool result, a short “next model step” status line shows that the agent is still working until the next tokens arrive.
+- **llama.cpp tuning**: For faster 14B / Opus inference (GPU layers, quant, batch, context), see [docs/LLAMA_SPEED.md](docs/LLAMA_SPEED.md).
 
 ### Architecture
 
