@@ -70,6 +70,11 @@ class Agent:
                 yield event
             return
 
+        if category == "simple" and not self._wants_web_tools(user_message):
+            async for event in self._simple_response(user_message):
+                yield event
+            return
+
         system_prompt = self.prompt_builder.build_system(
             category, self.registry, tool_names, self.skills_context
         )
@@ -225,6 +230,17 @@ class Agent:
         if resp.get("stats"):
             yield AgentEvent(type="stats", metadata=resp["stats"])
         yield AgentEvent(type="done")
+
+    def _wants_web_tools(self, message: str) -> bool:
+        m = message.lower()
+        keys = (
+            "http://", "https://", "www.", ".com", ".org", "search ",
+            "google", "duckduckgo", "weather", "mausam", "news ",
+            "fetch ", "url ", "website", "online ", "look up", "lookup",
+            "find online", "internet par", "web par", "latest ", "price of",
+            "kya chal raha", "headlines",
+        )
+        return any(k in m for k in keys)
 
     def _extract_tool_calls(self, text: str) -> list[tuple[str, dict]]:
         calls = []
