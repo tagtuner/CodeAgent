@@ -233,11 +233,13 @@ class Agent:
         is_greeting = len(message) < 30 and not any(
             w in msg_lower for w in ("draft", "write", "email", "letter", "explain", "summarize", "translate")
         )
+        # Keep simple chat quality consistent: prefer main model instead of fast for greetings.
         if is_greeting:
-            llm = self.llm_fast or self.llm_main
+            llm = self.llm_main or self.llm_fast
         else:
             llm = self.llm_opus or self.llm_main
         max_tok = 200 if is_greeting else 1000
+        temp = 0.35 if is_greeting else 0.5
 
         resp = await llm.chat(
             messages=[
@@ -245,7 +247,7 @@ class Agent:
                 {"role": "user", "content": message},
             ],
             max_tokens=max_tok,
-            temperature=0.7,
+            temperature=temp,
         )
         text = resp["content"]
         self.session.add_assistant(text)
