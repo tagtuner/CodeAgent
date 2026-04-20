@@ -36,7 +36,9 @@ KEYWORD_PATTERNS = {
     "coding": re.compile(
         r"\b(write\s+a?\s*(script|function|class|program|code|file)|"
         r"debug|refactor|implement|create\s+a?\s*(file|script)|python|bash|"
-        r"javascript|typescript|html|css|api|endpoint|parse|regex)\b",
+        r"javascript|typescript|html|css|api|endpoint|parse|regex|"
+        r"image|logo|design|mockup|png|jpg|jpeg|gif|webp|svg|draw|"
+        r"generate\s+(an?\s+)?image|create\s+(an?\s+)?image|resize|thumbnail)\b",
         re.IGNORECASE,
     ),
 }
@@ -70,6 +72,17 @@ class Router:
 
     def _keyword_classify(self, message: str) -> str | None:
         msg_lower = message.lower().strip()
+
+        # Force image/design generation requests into coding so tools are available.
+        image_words = (
+            "image", "logo", "design", "mockup", "png", "jpg", "jpeg", "gif",
+            "webp", "svg", "thumbnail", "draw",
+        )
+        action_words = (
+            "create", "generate", "make", "build", "edit", "resize", "convert",
+        )
+        if any(w in msg_lower for w in image_words) and any(v in msg_lower for v in action_words):
+            return "coding"
 
         simple_patterns = (
             "email", "letter", "draft", "translate", "summarize", "summary",

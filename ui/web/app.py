@@ -1,9 +1,10 @@
 from __future__ import annotations
 import json
 import asyncio
+import shutil
 from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from core.config import Config
@@ -22,6 +23,57 @@ _llm_fast: LLMClient | None = None
 _llm_opus: LLMClient | None = None
 _skills_context: str = ""
 _sessions: dict[str, Session] = {}
+
+
+def _workspace_root(config: Config) -> Path:
+    return Path(config.session.get("workspace_dir", "/opt/codeagent/workspaces"))
+
+
+def _workspace_for_session(config: Config, session_id: str) -> Path:
+    safe_id = "".join(ch for ch in session_id if ch.isalnum() or ch in ("-", "_")) or "session"
+    return _workspace_root(config) / safe_id
+
+
+def _ensure_workspace(config: Config, session_id: str) -> Path:
+    ws = _workspace_for_session(config, session_id)
+    ws.mkdir(parents=True, exist_ok=True)
+    return ws
+
+
+def _safe_workspace_file(config: Config, session_id: str, rel_path: str) -> Path | None:
+    ws = _workspace_for_session(config, session_id).resolve()
+    cand = (ws / rel_path).resolve()
+    try:
+        cand.relative_to(ws)
+    except Exception:
+        return None
+    return cand
+
+
+def _resolve_workspace_file(config: Config, session_id: str, rel_path: str) -> Path | None:
+    p = _safe_workspace_file(config, session_id, rel_path)
+    if p and p.exists() and p.is_file():
+        return p
+    # Fallback: if only basename provided, resolve to latest matching file anywhere in session workspace.
+    base = Path(rel_path).name
+    if not base:
+        return None
+    ws = _workspace_for_session(config, session_id)
+    if not ws.exists():
+        return None
+    latest: Path | None = None
+    latest_mtime = -1.0
+    for m in ws.rglob(base):
+        if not m.is_file():
+            continue
+        try:
+            mt = m.stat().st_mtime
+        except Exception:
+            continue
+        if mt > latest_mtime:
+            latest_mtime = mt
+            latest = m
+    return latest
 
 
 def create_app(
@@ -77,7 +129,8 @@ def create_app(
         max_tok = config.session.get("max_history_tokens", 12000)
         s = Session(max_history_tokens=max_tok)
         _sessions[s.id] = s
-        return {"session_id": s.id}
+        ws = _ensure_workspace(config, s.id)
+        return {"session_id": s.id, "workspace": str(ws)}
 
     @app.get("/api/session/{session_id}")
     async def get_session(session_id: str):
@@ -95,7 +148,80 @@ def create_app(
         if session_file.exists():
             session_file.unlink()
         _sessions.pop(session_id, None)
+        ws = _workspace_for_session(config, session_id)
+        if ws.exists():
+            shutil.rmtree(ws, ignore_errors=True)
         return {"status": "deleted", "id": session_id}
+
+    @app.get("/api/workspace/{session_id}")
+    async def workspace_info(session_id: str):
+        ws = _ensure_workspace(config, session_id)
+        files = []
+        for p in sorted(ws.rglob("*")):
+            if p.is_file():
+                try:
+                    rel = p.relative_to(ws).as_posix()
+                except Exception:
+                    rel = p.name
+                files.append(rel)
+            if len(files) >= 200:
+                break
+        return {"session_id": session_id, "workspace": str(ws), "files": files}
+
+    @app.get("/api/workspace/{session_id}/download")
+    async def workspace_download(session_id: str):
+        ws = _workspace_for_session(config, session_id)
+        if not ws.exists():
+            return JSONResponse({"error": "Workspace not found"}, status_code=404)
+        downloads_dir = Path("/tmp/codeagent-downloads")
+        downloads_dir.mkdir(parents=True, exist_ok=True)
+        archive_base = downloads_dir / f"{session_id}-workspace"
+        archive_path = shutil.make_archive(str(archive_base), "zip", root_dir=str(ws))
+        return FileResponse(
+            archive_path,
+            media_type="application/zip",
+            filename=f"{session_id}-workspace.zip",
+        )
+
+    @app.get("/api/workspace/{session_id}/latest-image")
+    async def workspace_latest_image(session_id: str):
+        ws = _workspace_for_session(config, session_id)
+        if not ws.exists():
+            return {"session_id": session_id, "path": None}
+        exts = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+        latest: Path | None = None
+        latest_mtime = -1.0
+        for p in ws.rglob("*"):
+            if not p.is_file() or p.suffix.lower() not in exts:
+                continue
+            try:
+                mtime = p.stat().st_mtime
+            except Exception:
+                continue
+            if mtime > latest_mtime:
+                latest_mtime = mtime
+                latest = p
+        if not latest:
+            return {"session_id": session_id, "path": None}
+        try:
+            rel = latest.relative_to(ws).as_posix()
+        except Exception:
+            rel = latest.name
+        return {"session_id": session_id, "path": rel}
+
+    @app.get("/api/workspace/{session_id}/file")
+    async def workspace_file(session_id: str, path: str):
+        p = _resolve_workspace_file(config, session_id, path)
+        if not p:
+            return JSONResponse({"error": "File not found"}, status_code=404)
+        return FileResponse(str(p))
+
+    @app.get("/api/workspace/{session_id}/download-file")
+    async def workspace_download_file(session_id: str, path: str):
+        p = _resolve_workspace_file(config, session_id, path)
+        if not p:
+            return JSONResponse({"error": "File not found"}, status_code=404)
+        return FileResponse(str(p), filename=p.name)
 
     @app.websocket("/ws/{session_id}")
     async def ws_chat(websocket: WebSocket, session_id: str):
@@ -110,6 +236,7 @@ def create_app(
             else:
                 session = Session(session_id=session_id, max_history_tokens=max_tok)
             _sessions[session_id] = session
+        ws_dir = _ensure_workspace(config, session_id)
 
         agent = Agent(
             config=config,
@@ -119,6 +246,7 @@ def create_app(
             registry=_registry,
             session=session,
             skills_context=_skills_context,
+            worker_dir=str(ws_dir),
         )
 
         input_queue: asyncio.Queue = asyncio.Queue()
@@ -223,6 +351,10 @@ def create_app(
 
                 agent._cancelled = False
                 agent.approval_queue = asyncio.Queue()
+                try:
+                    await websocket.send_text(json.dumps({"type": "workspace", "metadata": {"path": str(ws_dir)}}))
+                except Exception:
+                    pass
 
                 try:
                     async for event in agent.run(user_text):

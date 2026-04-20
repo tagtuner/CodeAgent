@@ -87,10 +87,10 @@ permissions:
 session:
   dir: /opt/codeagent/sessions
   # Lower = faster prefill per turn (less chat history sent to 14B/Opus). Raise if long threads lose context.
-  max_history_tokens: 6144
+  max_history_tokens: 2048
 
 agent:
-  max_iterations: 10
+  max_iterations: 4
   repeat_penalty: 1.15
-  temperature: 0.7
+  temperature: 0.2
   top_p: 0.9

@@ -13,12 +13,39 @@
   --mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: var(--font); background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
+body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100vh; height: 100dvh; display: flex; flex-direction: column; }
 
 .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
 .header h1 { font-size: 18px; font-weight: 600; }
 .header h1 span { color: var(--accent); }
 .header-right { display: flex; gap: 12px; align-items: center; }
+.workspace-chip { font-size: 11px; color: var(--text2); border: 1px solid var(--border); padding: 3px 8px; border-radius: 999px; max-width: 380px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.proc-badge {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--yellow);
+  border: 1px solid var(--yellow);
+  border-radius: 999px;
+  padding: 3px 9px;
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.proc-badge.visible { display: inline-flex; }
+.proc-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--yellow);
+  animation: procPulse 1s infinite ease-in-out;
+}
+@keyframes procPulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); display: inline-block; }
 .status-dot.offline { background: var(--red); }
 .btn { background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: all 0.15s; }
@@ -36,7 +63,8 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
 .session-item:hover .del-btn { display: inline-block; }
 .sidebar-footer { padding: 12px; border-top: 1px solid var(--border); }
 
-.chat-area { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.chat-area { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+.chat-area.with-preview .messages { padding-right: 360px; }
 .messages { flex: 1; overflow-y: auto; padding: 20px; }
 
 .msg { margin-bottom: 16px; animation: fadeIn 0.2s; }
@@ -60,6 +88,91 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
 .msg-bubble p { margin: 4px 0; line-height: 1.5; }
 .msg-tool .msg-bubble { max-width: 95%; }
 .msg-tool .msg-bubble pre { max-height: 250px; font-size: 11px; }
+.img-preview-wrap { margin: 8px 0 14px; max-width: 85%; }
+.img-preview-title { color: var(--text2); font-size: 12px; margin-bottom: 6px; }
+.img-preview-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+.img-preview-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+.img-preview-card img { max-width: 240px; max-height: 160px; display: block; border-radius: 6px; border: 1px solid var(--border); }
+.img-preview-card .cap { font-size: 11px; color: var(--text2); margin-top: 6px; font-family: var(--mono); }
+.preview-dock {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 340px;
+  bottom: 78px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  z-index: 12;
+  display: none;
+  flex-direction: column;
+  resize: horizontal;
+  overflow: auto;
+  min-width: 250px;
+  max-width: 70%;
+}
+.preview-dock.visible { display: flex; }
+.preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.preview-title { color: var(--accent); font-weight: 600; }
+.preview-btns { display: flex; gap: 6px; }
+.preview-btn {
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text2);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.preview-btn:hover { color: var(--text); border-color: var(--accent); }
+.preview-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  background: #090d13;
+}
+.preview-main img {
+  max-width: 100%;
+  max-height: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.preview-empty { color: var(--text2); font-size: 12px; }
+.preview-list {
+  border-top: 1px solid var(--border);
+  padding: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.preview-chip {
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text2);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 11px;
+  cursor: pointer;
+  max-width: 190px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.preview-chip.active {
+  color: var(--text);
+  border-color: var(--accent);
+}
 
 .msg-actions { display: none; gap: 3px; margin-top: 5px; }
 .msg:hover .msg-actions { display: flex; }
@@ -117,15 +230,44 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
 .stats-bar .tps { color: var(--green); }
 .stats-bar .elapsed { color: var(--yellow); }
 
-.input-area { padding: 12px 20px; border-top: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
-.input-row { display: flex; gap: 8px; }
-.input-row input { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 10px 14px; border-radius: 8px; font-size: 14px; font-family: var(--font); outline: none; transition: border-color 0.15s; }
-.input-row input:focus { border-color: var(--accent); }
-.input-row input::placeholder { color: var(--text2); }
-.send-btn { background: var(--accent); color: #000; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 14px; }
+.input-area {
+  padding: 10px 14px calc(14px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(22,27,34,0.95), var(--surface));
+  box-shadow: 0 -6px 20px rgba(0,0,0,0.25);
+  flex-shrink: 0;
+}
+.input-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px;
+}
+.input-row textarea {
+  flex: 1;
+  background: #0b1118;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: var(--font);
+  line-height: 1.45;
+  min-height: 42px;
+  max-height: 140px;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.input-row textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(88,166,255,0.12); }
+.input-row textarea::placeholder { color: var(--text2); }
+.send-btn { background: var(--accent); color: #000; border: none; padding: 10px 16px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 13px; min-width: 70px; }
 .send-btn:hover { opacity: 0.9; }
 .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.stop-btn { background: var(--red); color: #fff; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 14px; display: none; }
+.stop-btn { background: var(--red); color: #fff; border: none; padding: 10px 16px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 13px; display: none; min-width: 70px; }
 .stop-btn:hover { opacity: 0.85; }
 
 .typing { display: inline-flex; gap: 4px; padding: 8px 14px; }
@@ -150,6 +292,10 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
   <div class="header-right">
     <span class="status-dot" id="statusDot"></span>
     <span id="modelName" style="font-size:13px;color:var(--text2)">—</span>
+    <span class="proc-badge" id="procBadge"><span class="proc-dot"></span><span id="procText">Processing...</span></span>
+    <span class="workspace-chip" id="workspacePath" title="">workspace: —</span>
+    <button class="btn" onclick="togglePreviewDock()">Studio</button>
+    <button class="btn" onclick="downloadWorkspace()">Download Workspace</button>
     <button class="btn" onclick="newSession()">+ New Chat</button>
   </div>
 </div>
@@ -168,6 +314,18 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
 
   <div class="chat-area">
     <div class="messages" id="messages"></div>
+    <div class="preview-dock" id="previewDock">
+      <div class="preview-head">
+        <span class="preview-title">Live Preview</span>
+        <div class="preview-btns">
+          <button class="preview-btn" onclick="openCurrentPreview()">Open</button>
+          <button class="preview-btn" onclick="downloadCurrentPreview()">Download</button>
+          <button class="preview-btn" onclick="togglePreviewDock(false)">Hide</button>
+        </div>
+      </div>
+      <div class="preview-main" id="previewMain"><div class="preview-empty">No image yet</div></div>
+      <div class="preview-list" id="previewList"></div>
+    </div>
 
     <div class="terminal-panel" id="termPanel">
       <div class="term-toolbar">
@@ -190,8 +348,8 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); heig
     </div>
     <div class="input-area">
       <div class="input-row">
-        <input type="text" id="chatInput" placeholder="Type a message..." autocomplete="off"
-               onkeydown="if(event.key==='Enter')sendMessage()">
+        <textarea id="chatInput" placeholder="Type a message... (Enter to send, Shift+Enter new line)"
+               onkeydown="handleComposerKeydown(event)"></textarea>
         <button class="send-btn" id="sendBtn" onclick="sendMessage()">Send</button>
         <button class="stop-btn" id="stopBtn" onclick="stopGeneration()">Stop</button>
       </div>
@@ -208,6 +366,10 @@ let streamTokens = 0;
 let workerActive = false;
 let workerTabs = {};
 let activeTabId = null;
+let workspacePath = '';
+let previewFiles = [];
+let activePreview = '';
+let processingSince = 0;
 
 async function init() {
   try {
@@ -223,6 +385,114 @@ async function init() {
   } catch {}
   loadSessions();
   await newSession();
+}
+
+function setWorkspacePath(path) {
+  workspacePath = path || '';
+  const el = document.getElementById('workspacePath');
+  if (!el) return;
+  const text = workspacePath ? ('workspace: ' + workspacePath) : 'workspace: —';
+  el.textContent = text;
+  el.title = workspacePath || '';
+}
+
+function togglePreviewDock(forceVisible) {
+  const dock = document.getElementById('previewDock');
+  const area = document.querySelector('.chat-area');
+  if (!dock || !area) return;
+  let visible = dock.classList.contains('visible');
+  if (typeof forceVisible === 'boolean') visible = !forceVisible;
+  if (!visible) {
+    dock.classList.add('visible');
+    area.classList.add('with-preview');
+  } else {
+    dock.classList.remove('visible');
+    area.classList.remove('with-preview');
+  }
+}
+
+function resetPreviewDock() {
+  previewFiles = [];
+  activePreview = '';
+  const main = document.getElementById('previewMain');
+  const list = document.getElementById('previewList');
+  if (main) main.innerHTML = '<div class="preview-empty">No image yet</div>';
+  if (list) list.innerHTML = '';
+}
+
+function previewUrl(rel) {
+  return `/api/workspace/${sessionId}/file?path=${encodeURIComponent(rel)}`;
+}
+
+function previewDownloadUrl(rel) {
+  return `/api/workspace/${sessionId}/download-file?path=${encodeURIComponent(rel)}`;
+}
+
+function renderPreviewDock() {
+  const list = document.getElementById('previewList');
+  const main = document.getElementById('previewMain');
+  if (!list || !main) return;
+  list.innerHTML = '';
+  previewFiles.forEach(rel => {
+    const chip = document.createElement('button');
+    chip.className = 'preview-chip' + (rel === activePreview ? ' active' : '');
+    chip.textContent = rel;
+    chip.title = rel;
+    chip.onclick = function () {
+      activePreview = rel;
+      renderPreviewDock();
+    };
+    list.appendChild(chip);
+  });
+  if (!activePreview) {
+    main.innerHTML = '<div class="preview-empty">No image yet</div>';
+    return;
+  }
+  const img = document.createElement('img');
+  img.src = previewUrl(activePreview) + '&_ts=' + Date.now();
+  img.alt = activePreview;
+  main.innerHTML = '';
+  main.appendChild(img);
+}
+
+function registerPreviewFiles(paths) {
+  let changed = false;
+  paths.forEach(rel => {
+    if (!previewFiles.includes(rel)) {
+      previewFiles.push(rel);
+      changed = true;
+    }
+  });
+  if (!activePreview && previewFiles.length) {
+    activePreview = previewFiles[previewFiles.length - 1];
+    changed = true;
+  }
+  if (!changed) return;
+  togglePreviewDock(true);
+  renderPreviewDock();
+}
+
+function openCurrentPreview() {
+  if (!activePreview || !sessionId) return;
+  window.open(previewUrl(activePreview), '_blank');
+}
+
+function downloadCurrentPreview() {
+  if (!activePreview || !sessionId) return;
+  window.open(previewDownloadUrl(activePreview), '_blank');
+}
+
+async function refreshWorkspaceInfo() {
+  if (!sessionId) return;
+  try {
+    const data = await fetch(`/api/workspace/${sessionId}`).then(r => r.json());
+    setWorkspacePath(data.workspace || '');
+  } catch {}
+}
+
+function downloadWorkspace() {
+  if (!sessionId) return;
+  window.open(`/api/workspace/${sessionId}/download`, '_blank');
 }
 
 async function loadSessions() {
@@ -255,10 +525,12 @@ async function newSession() {
   try {
     const data = await fetch('/api/session/new', { method: 'POST' }).then(r => r.json());
     sessionId = data.session_id;
+    setWorkspacePath(data.workspace || '');
     connectWS();
     document.getElementById('messages').innerHTML = '';
     document.getElementById('msgCount').textContent = '0';
     resetTerminal();
+    resetPreviewDock();
     hideTerminal();
     addMsg('status', 'New session started — ' + sessionId);
   } catch (e) {
@@ -268,9 +540,11 @@ async function newSession() {
 
 async function switchSession(id) {
   sessionId = id;
+  refreshWorkspaceInfo();
   connectWS();
   document.getElementById('messages').innerHTML = '';
   resetTerminal();
+  resetPreviewDock();
   hideTerminal();
   document.querySelectorAll('.session-item').forEach(el => {
     el.classList.toggle('active', el.dataset.sid === id);
@@ -338,9 +612,27 @@ function resetProcessingUI() {
   if (stop) stop.style.display = 'none';
   var inp = document.getElementById('chatInput');
   if (inp) inp.focus();
+  setProcessingBadge(false);
   try {
     autoCollapseTerminal();
   } catch (e) {}
+}
+
+function setProcessingBadge(visible, detail) {
+  const badge = document.getElementById('procBadge');
+  const txt = document.getElementById('procText');
+  if (!badge || !txt) return;
+  if (!visible) {
+    badge.classList.remove('visible');
+    txt.textContent = 'Processing...';
+    processingSince = 0;
+    return;
+  }
+  if (!processingSince) processingSince = Date.now();
+  const sec = Math.max(0, Math.floor((Date.now() - processingSince) / 1000));
+  const d = (detail || 'Processing').trim();
+  txt.textContent = d + ' (' + sec + 's)';
+  badge.classList.add('visible');
 }
 
 function connectWS() {
@@ -363,6 +655,7 @@ function connectWS() {
 function handleEvent(evt) {
   switch (evt.type) {
     case 'text_delta':
+      if (processing) setProcessingBadge(true, 'Generating response');
       removeTyping();
       removeContinueHint();
       appendDelta(evt.content);
@@ -375,11 +668,13 @@ function handleEvent(evt) {
       else { addMsg('assistant', evt.content); }
       break;
     case 'tool_approval':
+      setProcessingBadge(true, 'Waiting approval: ' + (evt.tool_name || 'tool'));
       finalizeDelta(null);
       removeTyping();
       showApprovalDialog(evt.tool_name, evt.tool_args);
       break;
     case 'tool_start':
+      setProcessingBadge(true, 'Running tool: ' + (evt.tool_name || 'tool'));
       finalizeDelta(null);
       removeContinueHint();
       updateLiveStats();
@@ -387,13 +682,13 @@ function handleEvent(evt) {
       break;
     case 'tool_result': {
       updateLiveStats();
-      var raw = evt.content || '';
-      if (raw.length > TOOL_RESULT_UI_MAX) {
-        raw = raw.slice(0, TOOL_RESULT_UI_MAX) + '\n\n… [truncated for UI; full text saved in session]';
-      }
+      var raw = normalizeToolResult(evt.content || '');
       var toolHtml = '<b>' + escHtml(evt.tool_name) + '</b> result:\n' + escHtml(raw);
       requestAnimationFrame(function () {
         addMsg('tool', toolHtml, 'tool-result');
+        const paths = extractWorkspaceImagePaths(raw);
+        if (paths.length) addImagePreview(paths);
+        else maybeTriggerPreviewFromToolResult(raw);
         showContinueHint();
       });
       break;
@@ -401,6 +696,7 @@ function handleEvent(evt) {
     case 'worker_start':
       var wid = evt.metadata ? evt.metadata.worker_id : 1;
       var wdesc = evt.metadata && evt.metadata.description ? String(evt.metadata.description) : '';
+      setProcessingBadge(true, 'Running worker W' + wid + (wdesc ? ' - ' + wdesc : ''));
       showTerminal();
       ensureWorkerTab(wid, wdesc);
       switchTab(wid);
@@ -418,6 +714,7 @@ function handleEvent(evt) {
     case 'worker_done':
       var wid4 = evt.metadata ? evt.metadata.worker_id : activeTabId || 1;
       var ec = evt.metadata ? evt.metadata.exit_code : -1;
+      setProcessingBadge(true, ec === 0 ? 'Worker done, finalizing' : 'Worker finished with error');
       updateWorkerState(wid4, ec === 0 ? 'done' : 'error');
       if (ec === 0) {
         appendTermLineToWorker(wid4, 'Done (exit 0)', 'exit-ok');
@@ -431,7 +728,15 @@ function handleEvent(evt) {
       var widR = evt.metadata ? evt.metadata.worker_id : null;
       if (widR != null) removeWorkerFromUI(Number(widR));
       break;
+    case 'workspace':
+      setWorkspacePath(evt.metadata && evt.metadata.path ? String(evt.metadata.path) : '');
+      break;
     case 'status':
+      if (processing) {
+        var st = String(evt.content || '');
+        if (st.startsWith('category:')) setProcessingBadge(true, 'Category selected: ' + st.slice(9));
+        else setProcessingBadge(true, st || 'Processing');
+      }
       addMsg('status', evt.content);
       break;
     case 'error':
@@ -463,6 +768,8 @@ function sendMessage() {
   if (processing) return;
 
   processing = true;
+  processingSince = Date.now();
+  setProcessingBadge(true, 'Starting');
   document.getElementById('sendBtn').disabled = true;
   document.getElementById('sendBtn').style.display = 'none';
   document.getElementById('stopBtn').style.display = 'inline-block';
@@ -475,6 +782,13 @@ function sendMessage() {
   input.value = '';
   const mc = document.getElementById('msgCount');
   mc.textContent = parseInt(mc.textContent) + 1;
+}
+
+function handleComposerKeydown(event) {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    sendMessage();
+  }
 }
 
 function stopGeneration() {
@@ -689,11 +1003,39 @@ function getMsgText(msgEl) { return msgEl?.dataset?.text || msgEl?.querySelector
 function copyMsg(btn) {
   const msgEl = getMsgEl(btn);
   const text = getMsgText(msgEl);
-  navigator.clipboard.writeText(text).then(() => {
+  const mark = function(label) {
     const orig = btn.textContent;
-    btn.textContent = 'OK';
-    setTimeout(() => btn.textContent = orig, 800);
-  });
+    btn.textContent = label;
+    setTimeout(() => btn.textContent = orig, 900);
+  };
+  const fallbackCopy = function(v) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = v;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return !!ok;
+    } catch {
+      return false;
+    }
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(() => {
+      mark('OK');
+    }).catch(() => {
+      if (fallbackCopy(text)) mark('OK');
+      else mark('ERR');
+    });
+  } else {
+    if (fallbackCopy(text)) mark('OK');
+    else mark('ERR');
+  }
 }
 
 function editMsg(btn) {
@@ -896,6 +1238,80 @@ function updateLiveStats() {
   document.getElementById('statTime').textContent = elapsed.toFixed(1) + 's';
   document.getElementById('statTPS').textContent = tps.toFixed(2);
   document.getElementById('statCompletion').textContent = streamTokens;
+}
+
+function normalizeToolResult(raw) {
+  let text = raw || '';
+  if (looksBinaryDump(text)) {
+    return '[binary output suppressed for UI stability]';
+  }
+  if (text.length > TOOL_RESULT_UI_MAX) {
+    text = text.slice(0, TOOL_RESULT_UI_MAX) + '\n\n… [truncated for UI; full text saved in session]';
+  }
+  return text;
+}
+
+function looksBinaryDump(text) {
+  if (!text) return false;
+  const repl = (text.match(/�/g) || []).length;
+  if (repl > 120) return true;
+  if (repl > 0 && (repl / Math.max(1, text.length)) > 0.02) return true;
+  const ctrl = (text.match(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g) || []).length;
+  return ctrl > 40;
+}
+
+function extractWorkspaceImagePaths(text) {
+  const out = [];
+  if (!text || !workspacePath || !sessionId) return out;
+  const lower = text.toLowerCase();
+  if (!lower.includes('.png') && !lower.includes('.jpg') && !lower.includes('.jpeg') && !lower.includes('.gif') && !lower.includes('.webp')) {
+    return out;
+  }
+  const safePrefix = workspacePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(safePrefix + '[/\\\\][^\\s"\\\']+?\\.(?:png|jpg|jpeg|gif|webp)', 'ig');
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const abs = m[0].replace(/\\/g, '/');
+    const pref = workspacePath.replace(/\\/g, '/');
+    if (!abs.startsWith(pref + '/')) continue;
+    const rel = abs.slice(pref.length + 1);
+    if (!out.includes(rel)) out.push(rel);
+  }
+  const generic = /(^|[\s"'`])([^\s"'`]+?\.(?:png|jpg|jpeg|gif|webp))(?=$|[\s"'`])/ig;
+  let g;
+  while ((g = generic.exec(text)) !== null) {
+    let cand = (g[2] || '').trim().replace(/\\/g, '/');
+    if (!cand) continue;
+    cand = cand.replace(/^\.\/+/, '');
+    if (cand.startsWith('http://') || cand.startsWith('https://')) continue;
+    const pref = workspacePath.replace(/\\/g, '/');
+    if (cand.startsWith(pref + '/')) {
+      cand = cand.slice(pref.length + 1);
+    } else if (cand.startsWith('/opt/codeagent/workspaces/')) {
+      const parts = cand.split('/');
+      if (parts.length >= 6) cand = parts.slice(5).join('/');
+    }
+    if (cand && !out.includes(cand)) out.push(cand);
+  }
+  return out.slice(0, 4);
+}
+
+function addImagePreview(paths) {
+  registerPreviewFiles(paths || []);
+}
+
+function maybeTriggerPreviewFromToolResult(raw) {
+  if (!sessionId) return;
+  const t = String(raw || '').toLowerCase();
+  if (!(t.includes('convert') || t.includes('magick') || t.includes('.png') || t.includes('.jpg') || t.includes('.jpeg') || t.includes('.gif') || t.includes('.webp'))) {
+    return;
+  }
+  fetch(`/api/workspace/${sessionId}/latest-image`)
+    .then(r => r.json())
+    .then(data => {
+      if (data && data.path) registerPreviewFiles([String(data.path)]);
+    })
+    .catch(() => {});
 }
 
 function showStats(s) {

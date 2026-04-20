@@ -3,6 +3,29 @@ import glob as globmod
 from pathlib import Path
 from .base import BaseTool
 
+BINARY_EXTS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".svgz",
+    ".pdf", ".zip", ".gz", ".bz2", ".xz", ".7z", ".tar",
+    ".mp3", ".wav", ".ogg", ".mp4", ".mov", ".avi", ".mkv",
+    ".exe", ".dll", ".so", ".bin", ".dat", ".db",
+}
+
+
+def _looks_binary_file(path: Path) -> bool:
+    if path.suffix.lower() in BINARY_EXTS:
+        return True
+    try:
+        sample = path.read_bytes()[:4096]
+    except Exception:
+        return False
+    if b"\x00" in sample:
+        return True
+    if not sample:
+        return False
+    # Heuristic: too many non-text control bytes => likely binary
+    bad = sum(1 for b in sample if b < 9 or (13 < b < 32))
+    return (bad / max(1, len(sample))) > 0.08
+
 
 class ReadFileTool(BaseTool):
     name = "read_file"
@@ -23,6 +46,11 @@ class ReadFileTool(BaseTool):
             return f"File not found: {path}"
         if not p.is_file():
             return f"Not a file: {path}"
+        if _looks_binary_file(p):
+            return (
+                f"Binary file detected: {path}\n"
+                "Use shell metadata checks instead (e.g. ls -lh, file <path>) or open via workspace file endpoint."
+            )
         try:
             text = p.read_text(errors="replace")
             lines = text.splitlines()

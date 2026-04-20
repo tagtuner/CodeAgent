@@ -16,6 +16,7 @@ from tools.base import ToolRegistry
 TOOL_CALL_RE = re.compile(r"<(?:tool_call|tools)>\s*(\{.*?\})\s*</(?:tool_call|tools)>", re.DOTALL)
 CODE_BLOCK_CALL_RE = re.compile(r'```(?:json)?\s*(\{\s*"name"\s*:.*?\})\s*```', re.DOTALL)
 BARE_JSON_CALL_RE = re.compile(r'^\s*(\{\s*"name"\s*:.*?"arguments"\s*:\s*\{.*?\}\s*\})\s*$', re.DOTALL | re.MULTILINE)
+MAX_TOOL_CALL_RETRIES = 2
 
 
 def _bash_worker_tab_description(command: str, tc_args: dict | None) -> str:
@@ -50,6 +51,7 @@ class Agent:
         session: Session,
         skills_context: str = "",
         llm_opus: LLMClient | None = None,
+        worker_dir: str | None = None,
     ):
         self.config = config
         self.llm_main = llm_main
@@ -66,7 +68,7 @@ class Agent:
         self.top_p = config.agent.get("top_p", 0.9)
         self.approval_queue: asyncio.Queue = asyncio.Queue()
         self._cancelled = False
-        self.worker_pool = WorkerPool()
+        self.worker_pool = WorkerPool(work_dir=worker_dir or "/tmp/codeagent-worker")
         self._last_shell_output: str = ""
 
     async def run(self, user_message: str) -> AsyncIterator[AgentEvent]:
@@ -92,7 +94,21 @@ class Agent:
             category, self.registry, tool_names, self.skills_context
         )
 
-        llm = self.llm_opus if self.llm_opus and category in ("coding", "ebs") else self.llm_main
+        # Fast mode: keep coding/system on main model; reserve opus only for EBS-heavy flows.
+        llm = self.llm_opus if self.llm_opus and category == "ebs" else self.llm_main
+        force_tool_note = ""
+        require_tool_call = self._requires_tool_call(user_message, category)
+        image_task = self._is_image_task(user_message)
+        stream_text = True
+        tool_retry_count = 0
+        tool_phase_done = False
+        last_successful_signature = ""
+        finish_now = False
+        finish_text = ""
+        last_tool_name = ""
+        last_tool_result = ""
+        fast_finalize_after_tool = category in ("system", "coding") and not image_task
+        finalize_after_tool = False
 
         for iteration in range(self.max_iterations):
             if self._cancelled:
@@ -101,11 +117,19 @@ class Agent:
 
             history = self.session.get_history()
             messages = self.prompt_builder.build_messages(system_prompt, history)
+            if force_tool_note:
+                messages.append({"role": "system", "content": force_tool_note})
 
             full_text = ""
             llm_stats = None
+            max_tokens = None
+            if require_tool_call:
+                # Fast tool-call planning: avoid long prose generations.
+                llm_cap = int(getattr(llm, "max_output", 4096) or 4096)
+                max_tokens = max(192, min(900, llm_cap))
             async for chunk in llm.stream_chat(
                 messages,
+                max_tokens=max_tokens,
                 temperature=self.temperature,
                 repeat_penalty=self.repeat_penalty,
                 top_p=self.top_p,
@@ -114,7 +138,8 @@ class Agent:
                     break
                 if chunk.type == "text":
                     full_text += chunk.content
-                    yield AgentEvent(type="text_delta", content=chunk.content)
+                    if stream_text:
+                        yield AgentEvent(type="text_delta", content=chunk.content)
                 elif chunk.type == "done" and chunk.stats:
                     llm_stats = chunk.stats
 
@@ -125,13 +150,36 @@ class Agent:
             tool_calls = self._extract_tool_calls(full_text)
 
             if not tool_calls:
+                if require_tool_call and not tool_phase_done:
+                    tool_retry_count += 1
+                    if tool_retry_count <= MAX_TOOL_CALL_RETRIES:
+                        yield AgentEvent(
+                            type="status",
+                            content=f"Generating actionable tool call... retry {tool_retry_count}/{MAX_TOOL_CALL_RETRIES}",
+                        )
+                        force_tool_note = (
+                            "You MUST call at least one real tool now. "
+                            "Do not output prose, plans, or fake command snippets. "
+                            "Return exactly one valid <tool_call>{...}</tool_call> for the next concrete step."
+                        )
+                        continue
+                    yield AgentEvent(
+                        type="error",
+                        content="Could not produce a valid tool call quickly. Please retry with a shorter first step.",
+                    )
+                    break
                 clean_text = self._clean_response(full_text)
+                clean_text = self._strip_fake_approval_prompts(clean_text)
+                if not clean_text.strip() and last_tool_result:
+                    clean_text = await self._summary_from_fast_model(last_tool_name, last_tool_result)
                 self.session.add_assistant(clean_text)
                 yield AgentEvent(type="text", content=clean_text)
                 if llm_stats:
                     yield AgentEvent(type="stats", metadata=llm_stats)
                 break
             else:
+                force_tool_note = ""
+                tool_retry_count = 0
                 self.session.add_assistant(full_text)
                 if llm_stats:
                     yield AgentEvent(type="stats", metadata=llm_stats)
@@ -140,6 +188,20 @@ class Agent:
                         break
 
                     tc_args = self._fix_placeholder_paths(tc_name, tc_args)
+                    sig_obj = {"name": tc_name, "arguments": tc_args}
+                    tc_signature = json.dumps(sig_obj, sort_keys=True, ensure_ascii=False)
+                    if tc_signature == last_successful_signature:
+                        result_str = "Skipped duplicate tool call (already executed successfully in this turn)."
+                        yield AgentEvent(
+                            type="tool_result",
+                            tool_name=tc_name,
+                            content=result_str,
+                        )
+                        self.session.add_tool_result(tc_name, result_str)
+                        last_tool_name = tc_name
+                        last_tool_result = result_str
+                        tool_phase_done = True
+                        continue
 
                     yield AgentEvent(
                         type="tool_approval",
@@ -162,10 +224,17 @@ class Agent:
                             content=result_str,
                         )
                         self.session.add_tool_result(tc_name, result_str)
+                        last_tool_name = tc_name
+                        last_tool_result = result_str
+                        tool_phase_done = True
                         continue
 
                     if tc_name == "bash":
                         command = tc_args.get("command", "")
+                        if image_task:
+                            command = self._normalize_image_command(command)
+                            tc_args = dict(tc_args)
+                            tc_args["command"] = command
                         slot = self.worker_pool.create()
                         if slot is None:
                             cap = WorkerPool.MAX_WORKERS
@@ -203,6 +272,21 @@ class Agent:
                                 yield AgentEvent(type="worker_done", metadata={"worker_id": wid, "exit_code": ec})
                                 await self.worker_pool.release(wid)
                                 yield AgentEvent(type="worker_released", metadata={"worker_id": wid})
+                                if ec == 0:
+                                    last_successful_signature = tc_signature
+                                    if image_task:
+                                        finish_now = True
+                                        img_path = self._extract_image_path_from_text(result_str)
+                                        if img_path:
+                                            finish_text = (
+                                                "Image created successfully.\n"
+                                                f"Path: {img_path}\n"
+                                                + result_str
+                                            )
+                                        else:
+                                            finish_text = "Image created successfully.\n" + result_str
+                                    elif fast_finalize_after_tool:
+                                        finalize_after_tool = True
                     else:
                         yield AgentEvent(
                             type="tool_start",
@@ -216,6 +300,8 @@ class Agent:
                                 result_str = result_str[:4000] + "\n... (truncated)"
                         except Exception as e:
                             result_str = f"Error: {e}"
+                        else:
+                            last_successful_signature = tc_signature
 
                     yield AgentEvent(
                         type="tool_result",
@@ -223,8 +309,26 @@ class Agent:
                         content=result_str,
                     )
                     self.session.add_tool_result(tc_name, result_str)
+                    last_tool_name = tc_name
+                    last_tool_result = result_str
+                    tool_phase_done = True
+                if finish_now:
+                    out = finish_text.strip() or "Done."
+                    self.session.add_assistant(out)
+                    yield AgentEvent(type="text", content=out)
+                    break
+                if finalize_after_tool and last_tool_result:
+                    out = await self._summary_from_fast_model(last_tool_name, last_tool_result)
+                    self.session.add_assistant(out)
+                    yield AgentEvent(type="text", content=out)
+                    break
         else:
-            yield AgentEvent(type="error", content="Max tool iterations reached")
+            if last_tool_result:
+                out = await self._summary_from_fast_model(last_tool_name, last_tool_result)
+                self.session.add_assistant(out)
+                yield AgentEvent(type="text", content=out)
+            else:
+                yield AgentEvent(type="error", content="Max tool iterations reached")
 
         yield AgentEvent(type="done")
 
@@ -233,13 +337,13 @@ class Agent:
         is_greeting = len(message) < 30 and not any(
             w in msg_lower for w in ("draft", "write", "email", "letter", "explain", "summarize", "translate")
         )
-        # Keep simple chat quality consistent: prefer main model instead of fast for greetings.
+        # Fast mode: greetings/simple chat should prefer the fast model.
         if is_greeting:
-            llm = self.llm_main or self.llm_fast
+            llm = self.llm_fast or self.llm_main
         else:
             llm = self.llm_opus or self.llm_main
         max_tok = 200 if is_greeting else 1000
-        temp = 0.35 if is_greeting else 0.5
+        temp = 0.2 if is_greeting else 0.4
 
         resp = await llm.chat(
             messages=[
@@ -281,7 +385,54 @@ class Agent:
                     continue
             if calls:
                 break
+        if not calls:
+            for obj in self._extract_json_objects(text):
+                name = obj.get("name", "")
+                args = obj.get("arguments", {})
+                if name and self.registry.get(name):
+                    calls.append((name, args if isinstance(args, dict) else {}))
+                    break
         return calls
+
+    def _extract_json_objects(self, text: str) -> list[dict]:
+        objs: list[dict] = []
+        start = 0
+        while True:
+            idx = text.find("{", start)
+            if idx == -1:
+                break
+            depth = 0
+            in_str = False
+            esc = False
+            for j in range(idx, len(text)):
+                ch = text[j]
+                if in_str:
+                    if esc:
+                        esc = False
+                    elif ch == "\\":
+                        esc = True
+                    elif ch == '"':
+                        in_str = False
+                else:
+                    if ch == '"':
+                        in_str = True
+                    elif ch == "{":
+                        depth += 1
+                    elif ch == "}":
+                        depth -= 1
+                        if depth == 0:
+                            block = text[idx : j + 1]
+                            try:
+                                obj = json.loads(block)
+                                if isinstance(obj, dict) and "name" in obj and "arguments" in obj:
+                                    objs.append(obj)
+                            except Exception:
+                                pass
+                            start = j + 1
+                            break
+            else:
+                break
+        return objs
 
     def _fix_placeholder_paths(self, tool_name: str, args: dict) -> dict:
         if tool_name not in ("read_file", "edit_file", "write_file"):
@@ -321,3 +472,109 @@ class Agent:
         text = re.sub(r"</?(?:tools?|tool_call)>", "", text)
         text = re.sub(r"</?tool_response[^>]*>", "", text)
         return text.strip()
+
+    def _strip_fake_approval_prompts(self, text: str) -> str:
+        if not text:
+            return text
+        text = re.sub(r"(?im)^\s*next step:\s*approve for commit\??\s*$", "", text)
+        text = re.sub(r"(?im)^\s*approve for commit\??\s*$", "", text)
+        return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+    def _requires_tool_call(self, message: str, category: str) -> bool:
+        if category in ("coding", "system", "ebs"):
+            return True
+        m = message.lower()
+        keywords = (
+            "create", "build", "run", "execute", "fix", "deploy", "install",
+            "verify", "check", "show", "list", "find", "read", "write", "edit",
+            "mkdir", "touch", "git ", "commit", "push", "service", "systemctl",
+        )
+        return any(k in m for k in keywords)
+
+    def _is_image_task(self, message: str) -> bool:
+        m = message.lower()
+        keys = (
+            "image", "logo", "design", "mockup", "png", "jpg", "jpeg",
+            "gif", "webp", "svg", "thumbnail", "resize image", "create image",
+            "generate image",
+        )
+        return any(k in m for k in keys)
+
+    def _extract_image_path_from_text(self, text: str) -> str:
+        if not text:
+            return ""
+        m = re.search(r"(/(?:opt|home|root|tmp|var)[^\s\"']+\.(?:png|jpg|jpeg|gif|webp|svg))", text, re.I)
+        if m:
+            return m.group(1)
+        m2 = re.search(r"([A-Za-z0-9_.\-\/]+\.(?:png|jpg|jpeg|gif|webp|svg))", text, re.I)
+        return m2.group(1) if m2 else ""
+
+    def _normalize_image_command(self, command: str) -> str:
+        cmd = (command or "").strip()
+        if not cmd:
+            return cmd
+        # Force image outputs into the current session workspace root for reliable preview/download.
+        repl = r"$WS/\1"
+        pat_abs = r"/opt/codeagent/workspaces/[^\s\"']*?([A-Za-z0-9_.-]+\.(?:png|jpg|jpeg|gif|webp|svg))"
+        cmd2 = re.sub(pat_abs, repl, cmd, flags=re.I)
+        if cmd2 != cmd and "WS=" not in cmd2:
+            cmd2 = 'WS="$(dirname "$PWD")"; ' + cmd2
+        return cmd2
+
+    def _auto_summary_from_tool(self, tool_name: str, result: str) -> str:
+        text = (result or "").strip()
+        if not text:
+            return "Task complete."
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        ec = ""
+        for ln in lines:
+            m = re.search(r"\[exit_code:\s*(-?\d+)\]", ln, re.I)
+            if m:
+                ec = m.group(1)
+                break
+        preview = []
+        for ln in lines:
+            if ln.lower().startswith("[exit_code:"):
+                continue
+            preview.append(ln)
+            if len(preview) >= 4:
+                break
+        body = "\n".join(preview) if preview else "No output."
+        status = f"exit_code={ec}" if ec else "completed"
+        name = tool_name or "tool"
+        return f"Done ({name}, {status}).\n{body}"
+
+    async def _summary_from_fast_model(self, tool_name: str, result: str) -> str:
+        fallback = self._auto_summary_from_tool(tool_name, result)
+        llm = self.llm_fast or self.llm_main
+        if not llm:
+            return fallback
+        text = (result or "").strip()
+        if len(text) > 1400:
+            text = text[:1400] + "\n... (truncated)"
+        try:
+            resp = await asyncio.wait_for(
+                llm.chat(
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a concise technical assistant. "
+                                "Summarize tool execution in 1-2 short lines. "
+                                "Mention success/failure and key outputs only."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": f"Tool: {tool_name or 'tool'}\nResult:\n{text}",
+                        },
+                    ],
+                    max_tokens=60,
+                    temperature=0.1,
+                ),
+                timeout=3.0,
+            )
+            out = (resp.get("content") or "").strip()
+            return out if out else fallback
+        except Exception:
+            return fallback
