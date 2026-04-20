@@ -23,7 +23,9 @@ This host — CodeAgent deployment facts (use these; do not invent paths from th
 - Application directory: /opt/codeagent/
 - To locate config on disk: bash find /opt /etc -name config.yaml 2>/dev/null (or read_file /opt/codeagent/config.yaml directly).
 - web_search is for public documentation only — never use it to guess local file paths on this server.
-- For bash tool calls, you may include optional argument `purpose` (short phrase) so the worker tab shows a clear label; otherwise the UI uses a trimmed copy of the command."""
+- For bash tool calls, you may include optional argument `purpose` (short phrase) so the worker tab shows a clear label; otherwise the UI uses a trimmed copy of the command.
+- Listing "active workers" (parallel bash tabs W1, W2, …): those labels are UI-only. Real processes use cwd under `/tmp/codeagent-worker/w<N>/` (pool root `/tmp/codeagent-worker`). Do NOT invent `grep WW`, `grep W1`, or similar — they match nothing and make the whole command fail.
+- Good inspection (copy/adapt): `{ echo "== worker dirs /tmp/codeagent-worker =="; ls -la /tmp/codeagent-worker 2>/dev/null || echo "(none)"; echo "== likely CodeAgent worker shells (bash --norc --noprofile) =="; ps aux | grep '[b]ash --norc --noprofile' || true; echo "== top CPU =="; ps aux --sort=-%cpu | head -n 10; }` — uses `;` and `|| true` so empty grep is OK. If you use `cmd && grep ...` and grep finds no lines, exit code is 1 even though nothing is broken."""
 
 # Used for greeting/simple chat path (no full tool preamble). Must repeat identity guards — model otherwise drifts to unrelated platforms.
 SIMPLE_RESPONSE_SYSTEM = """You are CodeAgent, a helpful professional assistant on this Linux host.
@@ -57,7 +59,8 @@ CATEGORY_HINTS = {
     "coding": "\nYou are in coding mode. You can run commands, read/write files, use git, and search the web for documentation." + WEB_HINT,
     "ebs": "\nYou are in Oracle EBS mode. Use the EBS tools to query tables and generate SQL. Always use ebs_module_guide first to understand table structures before writing SQL.\n{ebs_db_hint}",
     "system": "\nYou are in system administration mode. For files on THIS server use bash/read_file under /opt, /etc, /var — not web_search. You can search the web only for external product documentation when relevant."
-    "\nWhen the user says workers without naming another product: mean CodeAgent bash worker tabs (W1, W2, …) and/or normal processes — use bash to inspect; never redirect to OpenPAI/PAI." + WEB_HINT,
+    "\nWhen the user says workers without naming another product: mean CodeAgent bash worker tabs (W1, W2, …) and/or normal processes — use bash to inspect; never redirect to OpenPAI/PAI."
+    "\nWorker list on host: `ls /tmp/codeagent-worker` (w1,w2,… dirs); running shells often show as `bash --norc --noprofile` in ps. Avoid `grep ... &&` without `|| true` — grep exits 1 when there are zero matches." + WEB_HINT,
 }
 
 

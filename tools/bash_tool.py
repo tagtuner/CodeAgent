@@ -20,7 +20,8 @@ class BashTool(BaseTool):
     name = "bash"
     description = (
         "Execute a shell command and return stdout/stderr. Use for running scripts, checking system status, installing packages, etc. "
-        "Optional `purpose`: one short phrase shown on the worker tab (e.g. \"disk usage\", \"list /opt\")."
+        "Optional `purpose`: one short phrase shown on the worker tab (e.g. \"disk usage\", \"list /opt\"). "
+        "Note: `grep` exits 1 when it finds no lines; chaining with `&&` then fails the whole command — use `;` or `grep ... || true` when empty output is OK."
     )
     parameters = {
         "type": "object",
