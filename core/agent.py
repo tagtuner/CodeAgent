@@ -7,7 +7,7 @@ from typing import AsyncIterator
 
 from core.config import Config
 from core.llm import LLMClient, Chunk
-from core.prompt import PromptBuilder
+from core.prompt import PromptBuilder, SIMPLE_RESPONSE_SYSTEM
 from core.session import Session
 from core.router import Router
 from core.worker import WorkerPool
@@ -18,9 +18,22 @@ CODE_BLOCK_CALL_RE = re.compile(r'```(?:json)?\s*(\{\s*"name"\s*:.*?\})\s*```', 
 BARE_JSON_CALL_RE = re.compile(r'^\s*(\{\s*"name"\s*:.*?"arguments"\s*:\s*\{.*?\}\s*\})\s*$', re.DOTALL | re.MULTILINE)
 
 
+def _bash_worker_tab_description(command: str, tc_args: dict | None) -> str:
+    """Label for the web UI worker tab (model-supplied or command preview)."""
+    if tc_args:
+        for key in ("purpose", "label", "description", "title"):
+            v = tc_args.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()[:120]
+    c = (command or "").strip()
+    if len(c) > 72:
+        return c[:72] + "…"
+    return c or "(bash)"
+
+
 @dataclass
 class AgentEvent:
-    type: str  # "text" | "tool_start" | "tool_result" | "error" | "status" | "done"
+    type: str  # "text" | "tool_start" | "tool_result" | "error" | "status" | "done" | "worker_released"
     content: str = ""
     tool_name: str = ""
     tool_args: dict | None = None
@@ -155,31 +168,41 @@ class Agent:
                         command = tc_args.get("command", "")
                         slot = self.worker_pool.create()
                         if slot is None:
-                            result_str = f"Max {WorkerPool.MAX_WORKERS} parallel workers reached. Wait for one to finish."
+                            cap = WorkerPool.MAX_WORKERS
+                            cap_msg = f"{cap} parallel workers" if cap is not None else "worker pool"
+                            result_str = f"Max {cap_msg} reached. Wait for one to finish."
                             yield AgentEvent(type="error", content=result_str)
                         else:
                             wid, worker = slot
-                            yield AgentEvent(type="worker_start", metadata={"worker_id": wid})
+                            tab_desc = _bash_worker_tab_description(command, tc_args)
+                            yield AgentEvent(
+                                type="worker_start",
+                                metadata={"worker_id": wid, "description": tab_desc},
+                            )
                             yield AgentEvent(type="worker_cmd", content=command, metadata={"worker_id": wid})
 
                             output_lines = []
-                            async for line in worker.execute(command):
-                                if self._cancelled:
-                                    await worker.kill()
-                                    break
-                                output_lines.append(line)
-                                yield AgentEvent(type="worker_output", content=line, metadata={"worker_id": wid})
-
-                            ec = worker.exit_code if worker.exit_code is not None else -1
-                            result_str = "\n".join(output_lines)
-                            if ec != 0:
-                                result_str += f"\n[exit_code: {ec}]"
-                            if len(result_str) > 4000:
-                                result_str = result_str[:4000] + "\n... (truncated)"
-
-                            self._last_shell_output = result_str
-
-                            yield AgentEvent(type="worker_done", metadata={"worker_id": wid, "exit_code": ec})
+                            try:
+                                try:
+                                    async for line in worker.execute(command):
+                                        if self._cancelled:
+                                            await worker.kill()
+                                            break
+                                        output_lines.append(line)
+                                        yield AgentEvent(type="worker_output", content=line, metadata={"worker_id": wid})
+                                except Exception as ex:
+                                    output_lines.append(f"[bash worker error] {ex}")
+                            finally:
+                                ec = worker.exit_code if worker.exit_code is not None else -1
+                                result_str = "\n".join(output_lines)
+                                if ec != 0:
+                                    result_str += f"\n[exit_code: {ec}]"
+                                if len(result_str) > 4000:
+                                    result_str = result_str[:4000] + "\n... (truncated)"
+                                self._last_shell_output = result_str
+                                yield AgentEvent(type="worker_done", metadata={"worker_id": wid, "exit_code": ec})
+                                await self.worker_pool.release(wid)
+                                yield AgentEvent(type="worker_released", metadata={"worker_id": wid})
                     else:
                         yield AgentEvent(
                             type="tool_start",
@@ -218,7 +241,7 @@ class Agent:
 
         resp = await llm.chat(
             messages=[
-                {"role": "system", "content": "You are CodeAgent, a helpful professional assistant. Write clear, well-formatted responses."},
+                {"role": "system", "content": SIMPLE_RESPONSE_SYSTEM},
                 {"role": "user", "content": message},
             ],
             max_tokens=max_tok,

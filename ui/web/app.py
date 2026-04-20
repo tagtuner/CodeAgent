@@ -143,13 +143,26 @@ def create_app(
                         kill_id = msg.get("worker_id")
                         if kill_id and agent.worker_pool:
                             await agent.worker_pool.kill(kill_id)
+                            try:
+                                await websocket.send_text(
+                                    json.dumps({"type": "worker_released", "metadata": {"worker_id": kill_id}})
+                                )
+                            except Exception:
+                                pass
                         elif agent.worker_pool:
-                            await agent.worker_pool.kill_all()
+                            released = await agent.worker_pool.kill_all()
                             agent._cancelled = True
                             try:
                                 agent.approval_queue.put_nowait(False)
                             except asyncio.QueueFull:
                                 pass
+                            for rid in released:
+                                try:
+                                    await websocket.send_text(
+                                        json.dumps({"type": "worker_released", "metadata": {"worker_id": rid}})
+                                    )
+                                except Exception:
+                                    pass
                     elif msg_type == "mid_task_query":
                         await mid_task_queue.put(msg)
                     else:
@@ -213,7 +226,9 @@ def create_app(
 
                 try:
                     async for event in agent.run(user_text):
-                        if agent._cancelled and event.type not in ("status", "done", "worker_done"):
+                        if agent._cancelled and event.type not in (
+                            "status", "done", "worker_done", "worker_released",
+                        ):
                             continue
 
                         payload = {"type": event.type, "content": event.content}

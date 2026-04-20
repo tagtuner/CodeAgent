@@ -11,7 +11,7 @@ Most AI coding assistants (OpenCode, Cursor, etc.) waste **14,000+ tokens** on s
 - **Smart 3-Model Router**: 1.5B classifies → routes to **27B Opus** (coding/EBS), **14B** (system), or **1.5B** (greetings)
 - **Agentic Tool Loop**: LLM calls tools, gets results, reasons, calls more tools — like a real agent
 - **13 Built-in Tools**: bash, file read/write/edit, glob search, git, Oracle DB, EBS module guide
-- **Parallel Multi-Worker Terminals**: Up to 5 concurrent bash workers with tabbed UI, each with its own persistent shell session — like tmux split panes in a browser
+- **Parallel Multi-Worker Terminals**: Unlimited concurrent bash workers with tabbed UI (W1, W2, …), each with its own persistent shell session — like tmux split panes in a browser (still subject to server RAM/ulimit)
 - **Tool Approval System**: Every tool call requires user approval before execution (Allow/Deny)
 - **Stop/Cancel**: Abort any ongoing AI response or worker mid-stream
 - **Message Actions**: Copy, Edit, Regenerate, Delete on every chat message
@@ -37,7 +37,7 @@ User Message
   → Prompt Builder (inject only relevant 2-4 tools, ~800 tokens)
   → Selected LLM generates response or tool calls
   → If tool call: approval prompt → user Allow/Deny
-  → If bash: WorkerPool assigns worker (W1-W5) → live terminal output
+  → If bash: WorkerPool assigns worker (W1, W2, …) → live terminal output
   → Tool result fed back → re-prompt → final response
   → Token stats displayed (prompt/completion/total/t/s)
 ```
@@ -214,7 +214,7 @@ CodeAgent/
 │   ├── prompt.py            # Smart prompt builder (<1000 token system prompts)
 │   ├── router.py            # 1.5B-based request classifier
 │   ├── session.py           # Conversation history with token-aware trimming
-│   └── worker.py            # SubWorker + WorkerPool (max 5 parallel bash terminals)
+│   └── worker.py            # SubWorker + WorkerPool (unlimited parallel bash terminals by default)
 ├── tools/                   # Tool system
 │   ├── base.py              # BaseTool + ToolRegistry
 │   ├── bash_tool.py         # Shell command execution
@@ -338,11 +338,11 @@ MCP tools are auto-discovered and registered on startup.
 - **64GB RAM / 32 vCPU** tested configuration — all 3 models running concurrently on CPU
 
 ### v0.5 — Parallel Multi-Worker Terminals
-- **WorkerPool**: Up to 5 concurrent bash workers, each with its own persistent shell
+- **WorkerPool**: Unlimited concurrent bash workers by default, each with its own persistent shell
 - **Tabbed Terminal UI**: W1, W2, W3... tabs with color-coded status dots (yellow=running, green=done, red=error)
 - **Per-worker controls**: Kill individual workers via tab, clear output, minimize panel
 - **Mid-task queries**: Ask the AI questions while workers execute — responds using live terminal context from all workers
-- **Hard limit**: Max 5 workers enforced to protect server resources
+- **No hard worker cap by default**: protect the host with OS limits (RAM, `ulimit`, etc.); optional cap can be set in code via `WorkerPool.MAX_WORKERS` if needed
 
 ### v0.4 — Sub-Worker Terminal System
 - Persistent background bash shell for command execution

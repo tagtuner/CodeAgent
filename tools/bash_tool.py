@@ -18,11 +18,18 @@ BLOCKED_PATTERNS = [
 
 class BashTool(BaseTool):
     name = "bash"
-    description = "Execute a shell command and return stdout/stderr. Use for running scripts, checking system status, installing packages, etc."
+    description = (
+        "Execute a shell command and return stdout/stderr. Use for running scripts, checking system status, installing packages, etc. "
+        "Optional `purpose`: one short phrase shown on the worker tab (e.g. \"disk usage\", \"list /opt\")."
+    )
     parameters = {
         "type": "object",
         "properties": {
             "command": {"type": "string", "description": "The shell command to execute"},
+            "purpose": {
+                "type": "string",
+                "description": "Short label for this job (shown in the web UI worker tab). Not executed as shell text.",
+            },
             "timeout": {"type": "integer", "description": "Timeout in seconds (default 120)"},
         },
         "required": ["command"],

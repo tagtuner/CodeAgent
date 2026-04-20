@@ -400,8 +400,9 @@ function handleEvent(evt) {
     }
     case 'worker_start':
       var wid = evt.metadata ? evt.metadata.worker_id : 1;
+      var wdesc = evt.metadata && evt.metadata.description ? String(evt.metadata.description) : '';
       showTerminal();
-      ensureWorkerTab(wid);
+      ensureWorkerTab(wid, wdesc);
       switchTab(wid);
       updateWorkerState(wid, 'running');
       workerActive = true;
@@ -425,6 +426,10 @@ function handleEvent(evt) {
       }
       workerActive = Object.values(workerTabs).some(w => w.state === 'running');
       if (!workerActive) autoCollapseTerminal();
+      break;
+    case 'worker_released':
+      var widR = evt.metadata ? evt.metadata.worker_id : null;
+      if (widR != null) removeWorkerFromUI(Number(widR));
       break;
     case 'status':
       addMsg('status', evt.content);
@@ -507,17 +512,42 @@ function toggleTerminal() {
   document.getElementById('termPanel').classList.toggle('minimized');
 }
 
-function ensureWorkerTab(wid) {
-  if (workerTabs[wid]) return;
+function ensureWorkerTab(wid, description) {
+  const desc = description ? String(description) : '';
+  if (workerTabs[wid]) {
+    if (desc) workerTabs[wid].description = desc;
+    return;
+  }
   const wrap = document.getElementById('termBodyWrap');
   const body = document.createElement('div');
   body.className = 'term-body';
   body.id = 'termBody_' + wid;
   wrap.appendChild(body);
 
-  workerTabs[wid] = { state: 'idle', el: body };
+  workerTabs[wid] = { state: 'idle', el: body, description: desc };
   renderTabs();
   switchTab(wid);
+}
+
+function removeWorkerFromUI(wid) {
+  if (!workerTabs[wid]) return;
+  const body = document.getElementById('termBody_' + wid);
+  if (body) body.remove();
+  delete workerTabs[wid];
+  const ids = Object.keys(workerTabs).map(Number).sort(function (a, b) { return a - b; });
+  if (activeTabId === wid) {
+    activeTabId = ids.length ? ids[ids.length - 1] : null;
+  }
+  renderTabs();
+  if (activeTabId && workerTabs[activeTabId]) switchTab(activeTabId);
+  workerActive = Object.values(workerTabs).some(function (w) { return w.state === 'running'; });
+  if (Object.keys(workerTabs).length === 0) {
+    activeTabId = null;
+    hideTerminal();
+    resetTerminal();
+  } else if (!workerActive) {
+    autoCollapseTerminal();
+  }
 }
 
 function renderTabs() {
@@ -535,7 +565,10 @@ function renderTabs() {
     tab.appendChild(dot);
 
     const label = document.createElement('span');
-    label.textContent = 'W' + wid;
+    var shortDesc = (info.description || '').trim();
+    if (shortDesc.length > 22) shortDesc = shortDesc.slice(0, 22) + '…';
+    label.textContent = shortDesc ? ('W' + wid + ' · ' + shortDesc) : ('W' + wid);
+    if (info.description) tab.title = String(info.description);
     tab.appendChild(label);
 
     const x = document.createElement('span');

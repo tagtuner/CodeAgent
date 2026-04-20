@@ -16,7 +16,7 @@ Categories:
 - simple: greetings, general questions, explanations, web searches, looking up information
 - coding: writing code, scripts, files, debugging, programming tasks
 - ebs: Oracle EBS, SQL queries, database tables, PO/AP/AR/GL/INV modules, suppliers, invoices
-- system: server administration, git, services, disk, network, system commands
+- system: server administration, git, services, disk, network, system commands; also workers/processes on THIS server (often CodeAgent bash worker tabs W1, W2, …, not OpenPAI/Kubernetes unless user names them)
 
 User message: {message}
 
@@ -30,7 +30,7 @@ KEYWORD_PATTERNS = {
     ),
     "system": re.compile(
         r"\b(systemctl|journalctl|nginx|firewall|disk|mount|nfs|ssh|service|"
-        r"git\s|git\b|commit|push|pull|reboot|cron|rsync|backup)\b",
+        r"git\s|git\b|commit|push|pull|reboot|cron|rsync|backup|workers?|active\s+worker)\b",
         re.IGNORECASE,
     ),
     "coding": re.compile(

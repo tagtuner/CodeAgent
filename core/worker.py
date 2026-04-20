@@ -96,9 +96,9 @@ class SubWorker:
 
 
 class WorkerPool:
-    """Manages up to MAX_WORKERS parallel SubWorker instances."""
+    """Manages parallel SubWorker instances. MAX_WORKERS=None means no cap (each bash is still a real OS process)."""
 
-    MAX_WORKERS = 5
+    MAX_WORKERS: int | None = None
 
     def __init__(self, work_dir: str = "/tmp/codeagent-worker"):
         self.work_dir = work_dir
@@ -107,7 +107,8 @@ class WorkerPool:
 
     def create(self) -> tuple[int, SubWorker] | None:
         self._cleanup_finished()
-        if len(self.workers) >= self.MAX_WORKERS:
+        cap = self.MAX_WORKERS
+        if cap is not None and len(self.workers) >= cap:
             return None
         wid = self._next_id
         self._next_id += 1
@@ -116,10 +117,17 @@ class WorkerPool:
         return wid, w
 
     def _cleanup_finished(self):
+        """Remove finished workers from the map only (subprocess already closed via release())."""
         finished = [wid for wid, w in self.workers.items()
                     if w.state in ("done", "idle", "error") and w.current_cmd is None]
         for wid in finished:
             del self.workers[wid]
+
+    async def release(self, worker_id: int) -> None:
+        """Close bash for this worker and remove it from the pool (call after each bash job completes)."""
+        w = self.workers.pop(worker_id, None)
+        if w:
+            await w.close()
 
     def get(self, worker_id: int) -> SubWorker | None:
         return self.workers.get(worker_id)
@@ -135,16 +143,16 @@ class WorkerPool:
                 parts.append(f"[W{wid}: {cmd}]\n{w.get_buffer(last_n)}")
         return "\n\n".join(parts)
 
-    async def kill(self, worker_id: int):
-        w = self.workers.get(worker_id)
-        if w:
-            await w.kill()
+    async def kill(self, worker_id: int) -> None:
+        """User-cancel or hard stop: close bash and drop pool entry."""
+        await self.release(worker_id)
 
-    async def kill_all(self):
-        for w in self.workers.values():
-            await w.kill()
+    async def kill_all(self) -> list[int]:
+        ids = list(self.workers.keys())
+        for wid in ids:
+            await self.release(wid)
+        return ids
 
     async def close_all(self):
-        for w in self.workers.values():
-            await w.close()
-        self.workers.clear()
+        for wid in list(self.workers.keys()):
+            await self.release(wid)
