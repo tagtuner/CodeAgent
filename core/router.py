@@ -5,7 +5,7 @@ from .llm import LLMClient
 TOOL_MAP: dict[str, list[str]] = {
     "simple": ["web_search", "web_fetch"],
     "coding": ["bash", "read_file", "write_file", "edit_file", "glob_search", "web_search", "web_fetch"],
-    "ebs": ["bash", "ebs_module_guide", "oracle_query", "oracle_schema", "sql_validate", "oracle_explain", "web_search"],
+    "ebs": ["bash", "ebs_module_guide", "ebs_concurrent_status", "oracle_query", "oracle_schema", "sql_validate", "oracle_explain", "web_search"],
     "system": ["bash", "read_file", "write_file", "git_status", "git_diff", "git_commit", "web_search", "web_fetch"],
 }
 

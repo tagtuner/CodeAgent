@@ -1,5 +1,7 @@
 from __future__ import annotations
+import re
 from .base import BaseTool
+from .oracle import _get_conn, _safe_val
 
 EBS_TABLES = {
     "PO": {
@@ -118,3 +120,209 @@ class EBSModuleGuideTool(BaseTool):
                     lines.append(f"    {j}")
             lines.append("")
         return "\n".join(lines)
+
+
+class EBSConcurrentStatusTool(BaseTool):
+    name = "ebs_concurrent_status"
+    description = (
+        "Show Oracle EBS concurrent requests with phase/status filters "
+        "(pending/running/completed/error), program filter, and lookback window."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "db": {
+                "type": "string",
+                "description": "Connection name from config (e.g. dev, prod). Defaults to config default.",
+            },
+            "phase": {
+                "type": "string",
+                "enum": ["ALL", "PENDING", "RUNNING", "COMPLETED", "INACTIVE"],
+                "description": "High-level phase filter.",
+            },
+            "status": {
+                "type": "string",
+                "description": "Optional exact status code filter (e.g. Q, I, R, C, E, X).",
+            },
+            "program_like": {
+                "type": "string",
+                "description": "Optional program name contains filter.",
+            },
+            "requested_by": {
+                "type": "string",
+                "description": "Optional EBS username contains filter.",
+            },
+            "last_hours": {
+                "type": "integer",
+                "description": "Only include requests newer than this many hours.",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max rows to return (1-500).",
+            },
+        },
+    }
+
+    PHASE_CODE = {
+        "ALL": None,
+        "PENDING": "P",
+        "RUNNING": "R",
+        "COMPLETED": "C",
+        "INACTIVE": "I",
+    }
+
+    PHASE_NAME = {
+        "P": "Pending",
+        "R": "Running",
+        "C": "Completed",
+        "I": "Inactive",
+    }
+
+    STATUS_NAME = {
+        "A": "Waiting",
+        "B": "Resuming",
+        "C": "Normal",
+        "D": "Cancelled",
+        "E": "Error",
+        "F": "Scheduled",
+        "G": "Warning",
+        "H": "On Hold",
+        "I": "Normal",
+        "M": "No Manager",
+        "Q": "Standby",
+        "R": "Normal",
+        "S": "Suspended",
+        "T": "Terminating",
+        "U": "Disabled",
+        "W": "Paused",
+        "X": "Terminated",
+        "Z": "Waiting",
+    }
+
+    async def execute(
+        self,
+        db: str = "",
+        phase: str = "ALL",
+        status: str = "",
+        program_like: str = "",
+        requested_by: str = "",
+        last_hours: int = 24,
+        limit: int = 100,
+    ) -> str:
+        phase_key = (phase or "ALL").strip().upper()
+        if phase_key not in self.PHASE_CODE:
+            return "Invalid phase. Use: ALL, PENDING, RUNNING, COMPLETED, INACTIVE"
+
+        if not isinstance(limit, int):
+            try:
+                limit = int(limit)
+            except Exception:
+                return "Invalid limit. Must be integer."
+        limit = max(1, min(limit, 500))
+
+        if not isinstance(last_hours, int):
+            try:
+                last_hours = int(last_hours)
+            except Exception:
+                return "Invalid last_hours. Must be integer."
+        last_hours = max(1, min(last_hours, 24 * 90))
+
+        status_code = (status or "").strip().upper()
+        if status_code and not re.match(r"^[A-Z]$", status_code):
+            return "Invalid status. Use a one-letter EBS status code (e.g. Q, I, R, C, E, X)."
+
+        params: dict[str, object] = {
+            "last_hours": last_hours,
+            "row_limit": limit,
+        }
+        where = [
+            "r.requested_start_date >= (SYSDATE - (:last_hours / 24))",
+        ]
+
+        phase_code = self.PHASE_CODE[phase_key]
+        if phase_code:
+            where.append("r.phase_code = :phase_code")
+            params["phase_code"] = phase_code
+
+        if status_code:
+            where.append("r.status_code = :status_code")
+            params["status_code"] = status_code
+
+        if program_like.strip():
+            where.append("LOWER(p.user_concurrent_program_name) LIKE :program_like")
+            params["program_like"] = f"%{program_like.strip().lower()}%"
+
+        if requested_by.strip():
+            where.append("LOWER(u.user_name) LIKE :requested_by")
+            params["requested_by"] = f"%{requested_by.strip().lower()}%"
+
+        sql = f"""
+            SELECT * FROM (
+                SELECT
+                    r.request_id,
+                    p.user_concurrent_program_name AS program_name,
+                    u.user_name AS requested_by,
+                    r.phase_code,
+                    r.status_code,
+                    r.requested_start_date,
+                    r.actual_start_date,
+                    r.actual_completion_date,
+                    r.logfile_name,
+                    r.outfile_name
+                FROM apps.fnd_concurrent_requests r
+                LEFT JOIN apps.fnd_concurrent_programs_vl p
+                  ON p.concurrent_program_id = r.concurrent_program_id
+                 AND p.application_id = r.program_application_id
+                LEFT JOIN apps.fnd_user u
+                  ON u.user_id = r.requested_by
+                WHERE {" AND ".join(where)}
+                ORDER BY r.request_id DESC
+            ) WHERE ROWNUM <= :row_limit
+        """
+
+        try:
+            conn = _get_conn(db)
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            cols = [d[0] for d in cur.description] if cur.description else []
+            rows = [[_safe_val(c) for c in r] for r in cur.fetchall()]
+            cur.close()
+            conn.close()
+        except Exception as e:
+            return f"EBS concurrent status error: {e}"
+
+        if not rows:
+            return (
+                f"No concurrent requests found for filters: "
+                f"phase={phase_key}, status={status_code or 'ANY'}, last_hours={last_hours}."
+            )
+
+        idx = {c.lower(): i for i, c in enumerate(cols)}
+        out = [
+            f"Rows: {len(rows)} (limit={limit}, last_hours={last_hours}, phase={phase_key}, status={status_code or 'ANY'})",
+            "",
+            "request_id | phase | status | requested_by | program_name | requested_start | started | completed",
+            "-" * 120,
+        ]
+
+        for r in rows:
+            req_id = r[idx["request_id"]]
+            phase_c = str(r[idx["phase_code"]] or "")
+            status_c = str(r[idx["status_code"]] or "")
+            phase_n = self.PHASE_NAME.get(phase_c, phase_c)
+            status_n = self.STATUS_NAME.get(status_c, status_c)
+            req_by = str(r[idx["requested_by"]] or "-")
+            prog = str(r[idx["program_name"]] or "-")
+            req_start = str(r[idx["requested_start_date"]] or "-")
+            act_start = str(r[idx["actual_start_date"]] or "-")
+            done = str(r[idx["actual_completion_date"]] or "-")
+
+            if len(prog) > 46:
+                prog = prog[:43] + "..."
+
+            out.append(
+                f"{req_id} | {phase_n}({phase_c}) | {status_n}({status_c}) | "
+                f"{req_by} | {prog} | {req_start} | {act_start} | {done}"
+            )
+
+        return "\n".join(out)

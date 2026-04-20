@@ -22,7 +22,7 @@ from tools.bash_tool import BashTool
 from tools.file_ops import ReadFileTool, WriteFileTool, EditFileTool, GlobSearchTool
 from tools.git_tool import GitStatusTool, GitDiffTool, GitCommitTool
 from tools.oracle import OracleQueryTool, OracleSchemaTool, SqlValidateTool, OracleExplainTool, set_oracle_connections
-from tools.ebs import EBSModuleGuideTool
+from tools.ebs import EBSModuleGuideTool, EBSConcurrentStatusTool
 from tools.web_search import WebSearchTool, WebFetchTool
 from mcp.client import MCPClient
 from mcp.registry import MCPRegistry
@@ -64,6 +64,7 @@ def build_registry(config: Config) -> ToolRegistry:
 
     if tool_cfg.get("ebs", {}).get("enabled", True):
         registry.register(EBSModuleGuideTool())
+        registry.register(EBSConcurrentStatusTool())
 
     if tool_cfg.get("web", {}).get("enabled", True):
         registry.register(WebSearchTool())
