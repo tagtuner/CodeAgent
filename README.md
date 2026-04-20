@@ -8,7 +8,7 @@ Most AI coding assistants (OpenCode, Cursor, etc.) waste **14,000+ tokens** on s
 
 ### Key Features
 
-- **Smart 3-Model Router**: 1.5B classifies → routes to **27B Opus** (coding/EBS), **14B** (system), or **1.5B** (greetings)
+- **Smart 3-Model Router**: 1.5B classifies → routes to **14B main** (coding/system), **27B Opus** (EBS-heavy), or **1.5B** (greetings/fast summaries)
 - **Agentic Tool Loop**: LLM calls tools, gets results, reasons, calls more tools — like a real agent
 - **13 Built-in Tools**: bash, file read/write/edit, glob search, git, Oracle DB, EBS module guide
 - **Parallel Multi-Worker Terminals**: Unlimited concurrent bash workers with tabbed UI (W1, W2, …), each with its own persistent shell session — like tmux split panes in a browser (still subject to server RAM/ulimit)
@@ -22,6 +22,10 @@ Most AI coding assistants (OpenCode, Cursor, etc.) waste **14,000+ tokens** on s
 - **Session Management**: Save/load/delete conversation history with token-aware trimming
 - **Mid-Task Queries**: Ask questions while workers are running — AI responds based on live terminal state
 - **Web UI responsiveness**: Streams assistant text as plain monospace during generation; markdown is applied when the assistant message completes. After a tool result, a short “next model step” status line shows that the agent is still working until the next tokens arrive.
+- **Live Design Studio**: Resizable right-side preview panel for generated images, with per-file open/download and workspace zip download
+- **Workspace-Aware Artifacts**: Per-session workspace directories (`/opt/codeagent/workspaces/<session_id>`) with API endpoints for file preview and downloads
+- **Processing Badge**: Header shows live stage + elapsed seconds (routing, generating, approval wait, tool run, finalizing)
+- **Fast Completion Summaries**: Post-tool summaries use a fast model path with strict timeout and deterministic fallback
 - **llama.cpp tuning**: For faster 14B / Opus inference (GPU layers, quant, batch, context), see [docs/LLAMA_SPEED.md](docs/LLAMA_SPEED.md).
 
 ### Architecture
@@ -31,9 +35,9 @@ User Message
   → Smart Router (1.5B model, instant classification)
   → Category: simple | coding | ebs | system
   → Model Selection:
-      coding/ebs → 27B Opus (superior reasoning)
-      system     → 14B Coder (infrastructure expertise)
-      simple     → 1.5B (greetings) or 27B Opus (writing/drafting)
+      coding/system → 14B main (fast default path)
+      ebs           → 27B Opus (deep reasoning)
+      simple        → 1.5B fast (greetings/quick turns)
   → Prompt Builder (inject only relevant 2-4 tools, ~800 tokens)
   → Selected LLM generates response or tool calls
   → If tool call: approval prompt → user Allow/Deny
@@ -197,6 +201,16 @@ models:
     name: qwen3.5-27b-opus
     ctx_size: 16384
     max_output: 4096
+
+session:
+  dir: /opt/codeagent/sessions
+  max_history_tokens: 2048
+
+agent:
+  max_iterations: 4
+  repeat_penalty: 1.15
+  temperature: 0.2
+  top_p: 0.9
 ```
 
 ## Project Structure
@@ -331,7 +345,17 @@ MCP tools are auto-discovered and registered on startup.
 
 ## Changelog
 
-### v0.6 — 3-Model Smart Routing with 27B Opus (Latest)
+### v0.7 — Fast Mode + Studio Workflow (Latest)
+- **Fast mode defaults**: coding/system tasks prefer 14B main; EBS stays on Opus when needed
+- **Latency tuning**: lower history window (`2048`) + fewer max iterations (`4`) for faster first response
+- **Duplicate-call guard**: skips repeated identical tool calls in the same turn
+- **Image workflow hardening**: workspace-scoped output normalization + latest-image fallback detection
+- **Binary output safety**: `read_file` blocks binary dumps and UI suppresses binary-like tool output
+- **Live Design Studio**: resizable preview dock with per-file open/download + workspace download API
+- **Processing visibility**: live header badge shows stage and elapsed time
+- **Fast summary path**: quick post-tool summary with timeout + deterministic fallback
+
+### v0.6 — 3-Model Smart Routing with 27B Opus
 - **Qwen3.5-27B Opus Distilled**: Added as primary model for coding, EBS, and writing tasks — fine-tuned on Claude 4.6 Opus reasoning
 - **Smart 3-model routing**: Coding/EBS → 27B Opus, System → 14B Coder, Greetings → 1.5B Fast
 - **Non-greeting simple tasks** (draft, write, explain) now routed to 27B for superior quality
