@@ -368,6 +368,8 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); min-
       <div class="info-panel">
         <div class="info-row"><span>Tools</span><span id="toolCount">—</span></div>
         <div class="info-row"><span>Messages</span><span id="msgCount">0</span></div>
+        <div class="info-row"><span>CPU</span><span id="cpuUsage">—</span></div>
+        <div class="info-row"><span>RAM</span><span id="ramUsage">—</span></div>
         <div class="tools-wrap">
           <div class="tools-head">
             <span class="tools-title">Tool List</span>
@@ -446,6 +448,7 @@ let workspacePath = '';
 let previewFiles = [];
 let activePreview = '';
 let processingSince = 0;
+let metricsTimer = null;
 /** @type {{path:string,name:string,size:number}[]} */
 let pendingAttachments = [];
 
@@ -474,6 +477,39 @@ async function init() {
   } catch {}
   loadSessions();
   await newSession();
+  refreshSystemMetrics();
+  if (!metricsTimer) {
+    metricsTimer = setInterval(refreshSystemMetrics, 5000);
+  }
+}
+
+function setSystemMetrics(data) {
+  const cpuEl = document.getElementById('cpuUsage');
+  const ramEl = document.getElementById('ramUsage');
+  if (cpuEl) {
+    const cpu = (data && typeof data.cpu_percent === 'number')
+      ? `${data.cpu_percent.toFixed(1)}%`
+      : '—';
+    cpuEl.textContent = cpu;
+  }
+  if (ramEl) {
+    if (data && typeof data.ram_percent === 'number' && typeof data.ram_used_mb === 'number' && typeof data.ram_total_mb === 'number') {
+      ramEl.textContent = `${data.ram_percent.toFixed(1)}% (${data.ram_used_mb}/${data.ram_total_mb} MB)`;
+    } else {
+      ramEl.textContent = '—';
+    }
+  }
+}
+
+async function refreshSystemMetrics() {
+  try {
+    const r = await fetch('/api/system/metrics');
+    if (!r.ok) throw new Error('metrics unavailable');
+    const data = await r.json();
+    setSystemMetrics(data || {});
+  } catch {
+    setSystemMetrics(null);
+  }
 }
 
 function setWorkspacePath(path) {

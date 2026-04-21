@@ -1,7 +1,9 @@
 from __future__ import annotations
 import json
 import asyncio
+import logging
 import shutil
+import os
 from pathlib import Path
 from typing import Annotated
 
@@ -18,6 +20,7 @@ from skills.loader import SkillLoader
 from tools.base import ToolRegistry
 
 STATIC_DIR = Path(__file__).parent / "static"
+log = logging.getLogger("codeagent.web")
 
 _config: Config | None = None
 _registry: ToolRegistry | None = None
@@ -33,6 +36,67 @@ _UPLOAD_ALLOWED_SUFFIXES = frozenset({
     ".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".pdf", ".zip",
     ".txt", ".md", ".json", ".csv", ".blend", ".glb",
 })
+_cpu_prev_sample: tuple[int, int] | None = None
+
+
+def _read_linux_cpu_sample() -> tuple[int, int] | None:
+    """Return (total_jiffies, idle_jiffies) from /proc/stat."""
+    try:
+        first = Path("/proc/stat").read_text(encoding="utf-8", errors="ignore").splitlines()[0]
+        parts = first.split()
+        if len(parts) < 5 or parts[0] != "cpu":
+            return None
+        nums = [int(x) for x in parts[1:]]
+        total = sum(nums)
+        idle = nums[3] + (nums[4] if len(nums) > 4 else 0)  # idle + iowait
+        return total, idle
+    except Exception:
+        return None
+
+
+def _linux_cpu_percent() -> float | None:
+    """
+    Compute host CPU usage % from /proc/stat deltas.
+    First sample has no prior baseline, so returns None.
+    """
+    global _cpu_prev_sample
+    cur = _read_linux_cpu_sample()
+    if not cur:
+        return None
+    prev = _cpu_prev_sample
+    _cpu_prev_sample = cur
+    if not prev:
+        return None
+    total_delta = cur[0] - prev[0]
+    idle_delta = cur[1] - prev[1]
+    if total_delta <= 0:
+        return None
+    busy = max(0.0, min(1.0, 1.0 - (idle_delta / total_delta)))
+    return round(busy * 100.0, 1)
+
+
+def _linux_memory_usage() -> dict[str, float | int] | None:
+    """Return Linux RAM metrics from /proc/meminfo."""
+    try:
+        mem = {}
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8", errors="ignore").splitlines():
+            if ":" not in line:
+                continue
+            k, v = line.split(":", 1)
+            mem[k.strip()] = v.strip()
+        total_kb = int(mem.get("MemTotal", "0 kB").split()[0])
+        avail_kb = int(mem.get("MemAvailable", "0 kB").split()[0])
+        if total_kb <= 0:
+            return None
+        used_kb = max(0, total_kb - avail_kb)
+        pct = round((used_kb / total_kb) * 100.0, 1)
+        return {
+            "used_mb": round(used_kb / 1024.0),
+            "total_mb": round(total_kb / 1024.0),
+            "percent": pct,
+        }
+    except Exception:
+        return None
 
 
 def _workspace_root(config: Config) -> Path:
@@ -217,6 +281,26 @@ def create_app(
     async def health():
         return {"status": "ok", "model": config.main_model.name}
 
+    @app.get("/api/system/metrics")
+    async def system_metrics():
+        cpu_pct = _linux_cpu_percent()
+        mem = _linux_memory_usage()
+        load1 = load5 = load15 = None
+        try:
+            load1, load5, load15 = os.getloadavg()
+            load1, load5, load15 = round(load1, 2), round(load5, 2), round(load15, 2)
+        except Exception:
+            pass
+        return {
+            "cpu_percent": cpu_pct,
+            "ram_percent": (mem or {}).get("percent"),
+            "ram_used_mb": (mem or {}).get("used_mb"),
+            "ram_total_mb": (mem or {}).get("total_mb"),
+            "load_avg_1m": load1,
+            "load_avg_5m": load5,
+            "load_avg_15m": load15,
+        }
+
     @app.get("/api/tools")
     async def list_tools():
         return {"tools": _registry.list_tools()}
@@ -377,6 +461,7 @@ def create_app(
     @app.websocket("/ws/{session_id}")
     async def ws_chat(websocket: WebSocket, session_id: str):
         await websocket.accept()
+        log.info("ws accepted session=%s", session_id)
         session = _sessions.get(session_id)
         if not session:
             max_tok = config.session.get("max_history_tokens", 12000)
@@ -409,6 +494,18 @@ def create_app(
                     raw = await websocket.receive_text()
                     msg = json.loads(raw)
                     msg_type = msg.get("type", "message")
+                    if msg_type in ("message", "mid_task_query"):
+                        txt = str(msg.get("message") or "").strip().replace("\n", " ")
+                        log.info(
+                            "ws recv session=%s type=%s len=%s attachments=%s text='%s'",
+                            session_id,
+                            msg_type,
+                            len(txt),
+                            len(msg.get("attachments") or []),
+                            txt[:140],
+                        )
+                    else:
+                        log.info("ws recv session=%s type=%s", session_id, msg_type)
 
                     if msg_type == "tool_response":
                         await agent.approval_queue.put(msg.get("approved", False))
@@ -447,6 +544,7 @@ def create_app(
                     else:
                         await input_queue.put(msg)
             except (WebSocketDisconnect, Exception):
+                log.info("ws receiver closed session=%s", session_id)
                 await input_queue.put(None)
                 await mid_task_queue.put(None)
 
@@ -499,7 +597,12 @@ def create_app(
                 user_text = (msg.get("message") or "").strip()
                 raw_attachments = msg.get("attachments") or []
                 validated = _validate_client_attachments(config, session_id, raw_attachments)
+                log.info(
+                    "queue message session=%s user_len=%s raw_attach=%s valid_attach=%s",
+                    session_id, len(user_text), len(raw_attachments), len(validated)
+                )
                 if not user_text and not validated:
+                    log.info("drop empty message session=%s", session_id)
                     continue
                 if not user_text and validated:
                     user_text = (
@@ -516,6 +619,10 @@ def create_app(
                     agent.skills_context = (base_ctx + "\n\n" + triggered_skills).strip() if base_ctx else triggered_skills
                 else:
                     agent.skills_context = base_ctx
+                log.info(
+                    "run start session=%s skills_triggered=%s",
+                    session_id, bool(triggered_skills)
+                )
                 try:
                     await websocket.send_text(json.dumps({"type": "workspace", "metadata": {"path": str(ws_dir)}}))
                 except Exception:
@@ -540,6 +647,7 @@ def create_app(
                         except Exception:
                             break
                 except Exception as e:
+                    log.exception("agent.run failed session=%s err=%s", session_id, e)
                     try:
                         await websocket.send_text(json.dumps({"type": "error", "content": str(e)}))
                     except Exception:
@@ -555,11 +663,13 @@ def create_app(
                 session.save(session_dir)
 
         except (WebSocketDisconnect, Exception):
+            log.info("ws outer loop ended session=%s", session_id)
             pass
         finally:
             receiver.cancel()
             mid_handler.cancel()
             if agent.worker_pool:
                 await agent.worker_pool.close_all()
+            log.info("ws finalized session=%s", session_id)
 
     return app

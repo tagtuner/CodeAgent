@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import AsyncIterator
@@ -17,6 +18,7 @@ TOOL_CALL_RE = re.compile(r"<(?:tool_call|tools)>\s*(\{.*?\})\s*</(?:tool_call|t
 CODE_BLOCK_CALL_RE = re.compile(r'```(?:json)?\s*(\{\s*"name"\s*:.*?\})\s*```', re.DOTALL)
 BARE_JSON_CALL_RE = re.compile(r'^\s*(\{\s*"name"\s*:.*?"arguments"\s*:\s*\{.*?\}\s*\})\s*$', re.DOTALL | re.MULTILINE)
 MAX_TOOL_CALL_RETRIES = 2
+log = logging.getLogger("codeagent.agent")
 
 
 def _bash_worker_tab_description(command: str, tc_args: dict | None) -> str:
@@ -74,20 +76,21 @@ class Agent:
     async def run(self, user_message: str) -> AsyncIterator[AgentEvent]:
         self._last_shell_output = ""
         self.session.add_user(user_message)
+        sid = getattr(self.session, "id", "unknown")
+        log.info("run start session=%s msg='%s'", sid, user_message.replace("\n", " ")[:180])
 
         category = await self.router.classify(user_message)
+        log.info("classified session=%s category=%s", sid, category)
         yield AgentEvent(type="status", content=f"category:{category}")
 
         tool_names = self.router.get_tools(category)
         # Include discovered MCP tools for practical categories, otherwise they stay unreachable.
         if category in ("coding", "system", "ebs"):
-            mcp_tools = [
-                t for t in self.registry.list_tools()
-                if t.startswith("mcp_")
-            ]
+            mcp_tools = self._select_mcp_tools_for_message(user_message)
             for t in mcp_tools:
                 if t not in tool_names:
                     tool_names.append(t)
+        log.info("tools active session=%s count=%s", sid, len(tool_names))
 
         if not tool_names:
             async for event in self._simple_response(user_message):
@@ -157,6 +160,13 @@ class Agent:
                 break
 
             tool_calls = self._extract_tool_calls(full_text)
+            if tool_calls:
+                log.info(
+                    "tool calls extracted session=%s iter=%s calls=%s",
+                    sid, iteration + 1, [name for name, _ in tool_calls]
+                )
+            else:
+                log.info("no tool calls session=%s iter=%s", sid, iteration + 1)
 
             if not tool_calls:
                 if require_tool_call and not tool_phase_done:
@@ -281,6 +291,7 @@ class Agent:
                                 yield AgentEvent(type="worker_done", metadata={"worker_id": wid, "exit_code": ec})
                                 await self.worker_pool.release(wid)
                                 yield AgentEvent(type="worker_released", metadata={"worker_id": wid})
+                                log.info("tool done session=%s tool=bash exit=%s", sid, ec)
                                 if ec == 0:
                                     last_successful_signature = tc_signature
                                     if image_task:
@@ -311,6 +322,7 @@ class Agent:
                             result_str = f"Error: {e}"
                         else:
                             last_successful_signature = tc_signature
+                        log.info("tool done session=%s tool=%s", sid, tc_name)
 
                     yield AgentEvent(
                         type="tool_result",
@@ -379,6 +391,56 @@ class Agent:
             "kya chal raha", "headlines",
         )
         return any(k in m for k in keys)
+
+    def _select_mcp_tools_for_message(self, message: str) -> list[str]:
+        """Keep MCP tool set focused; large tool lists significantly slow tool planning."""
+        all_mcp = [t for t in self.registry.list_tools() if t.startswith("mcp_")]
+        if not all_mcp:
+            return []
+        msg = message.lower()
+
+        if "blender" in msg or "mcp_blender_" in msg or "viewport" in msg:
+            core = [
+                "mcp_blender_get_scene_info",
+                "mcp_blender_get_object_info",
+                "mcp_blender_get_viewport_screenshot",
+                "mcp_blender_execute_blender_code",
+            ]
+            opt = []
+            if any(k in msg for k in ("polyhaven", "hdri", "texture", "asset")):
+                opt += [
+                    "mcp_blender_get_polyhaven_categories",
+                    "mcp_blender_search_polyhaven_assets",
+                    "mcp_blender_download_polyhaven_asset",
+                    "mcp_blender_set_texture",
+                    "mcp_blender_get_polyhaven_status",
+                ]
+            if any(k in msg for k in ("sketchfab", "model preview")):
+                opt += [
+                    "mcp_blender_get_sketchfab_status",
+                    "mcp_blender_search_sketchfab_models",
+                    "mcp_blender_get_sketchfab_model_preview",
+                    "mcp_blender_download_sketchfab_model",
+                ]
+            if any(k in msg for k in ("hyper3d", "rodin")):
+                opt += [
+                    "mcp_blender_get_hyper3d_status",
+                    "mcp_blender_generate_hyper3d_model_via_text",
+                    "mcp_blender_generate_hyper3d_model_via_images",
+                    "mcp_blender_poll_rodin_job_status",
+                    "mcp_blender_import_generated_asset",
+                ]
+            if "hunyuan" in msg:
+                opt += [
+                    "mcp_blender_get_hunyuan3d_status",
+                    "mcp_blender_generate_hunyuan3d_model",
+                    "mcp_blender_poll_hunyuan_job_status",
+                    "mcp_blender_import_generated_asset_hunyuan",
+                ]
+            selected = [t for t in (core + opt) if t in all_mcp]
+            return selected or [t for t in all_mcp if t.startswith("mcp_blender_")][:4]
+
+        return all_mcp
 
     def _extract_tool_calls(self, text: str) -> list[tuple[str, dict]]:
         calls = []
