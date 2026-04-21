@@ -75,6 +75,10 @@ class Router:
     def _keyword_classify(self, message: str) -> str | None:
         msg_lower = message.lower().strip()
 
+        # Explicit tool invocation style should never route to simple.
+        if "mcp_blender_" in msg_lower or "tool_call" in msg_lower or "blender tool" in msg_lower:
+            return "coding"
+
         # Force image/design generation requests into coding so tools are available.
         image_words = (
             "image", "logo", "design", "mockup", "png", "jpg", "jpeg", "gif",
@@ -105,6 +109,7 @@ class Router:
             if not any(w in msg_lower for w in (
                 "sql", "oracle", "ebs", "select ", "table", "server",
                 "systemctl", "nginx", "bash", "script", "function", "file",
+                "blender", "mcp_", "tool", "viewport", ".blend",
             )):
                 return "simple"
 
