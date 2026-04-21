@@ -36,6 +36,7 @@ _UPLOAD_ALLOWED_SUFFIXES = frozenset({
     ".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".pdf", ".zip",
     ".txt", ".md", ".json", ".csv", ".blend", ".glb",
 })
+_IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp"})
 _cpu_prev_sample: tuple[int, int] | None = None
 
 
@@ -374,11 +375,10 @@ def create_app(
         ws = _workspace_for_session(config, session_id)
         if not ws.exists():
             return {"session_id": session_id, "path": None}
-        exts = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
         latest: Path | None = None
         latest_mtime = -1.0
         for p in ws.rglob("*"):
-            if not p.is_file() or p.suffix.lower() not in exts:
+            if not p.is_file() or p.suffix.lower() not in _IMAGE_EXTS:
                 continue
             try:
                 mtime = p.stat().st_mtime
@@ -395,12 +395,41 @@ def create_app(
             rel = latest.name
         return {"session_id": session_id, "path": rel}
 
+    @app.get("/api/workspace/{session_id}/images")
+    async def workspace_images(session_id: str):
+        ws = _workspace_for_session(config, session_id)
+        if not ws.exists():
+            return {"session_id": session_id, "images": []}
+        items: list[tuple[float, str]] = []
+        for p in ws.rglob("*"):
+            if not p.is_file() or p.suffix.lower() not in _IMAGE_EXTS:
+                continue
+            try:
+                rel = p.relative_to(ws).as_posix()
+                mtime = p.stat().st_mtime
+            except Exception:
+                continue
+            items.append((mtime, rel))
+        items.sort(key=lambda x: x[0], reverse=True)
+        return {"session_id": session_id, "images": [rel for _, rel in items[:400]]}
+
     @app.get("/api/workspace/{session_id}/file")
     async def workspace_file(session_id: str, path: str):
         p = _resolve_workspace_file(config, session_id, path)
         if not p:
             return JSONResponse({"error": "File not found"}, status_code=404)
         return FileResponse(str(p))
+
+    @app.delete("/api/workspace/{session_id}/file")
+    async def workspace_delete_file(session_id: str, path: str):
+        p = _safe_workspace_file(config, session_id, path)
+        if not p or not p.exists() or not p.is_file():
+            return JSONResponse({"error": "File not found"}, status_code=404)
+        try:
+            p.unlink()
+            return {"ok": True, "path": path}
+        except Exception as e:
+            return JSONResponse({"error": f"delete failed: {e}"}, status_code=500)
 
     @app.get("/api/workspace/{session_id}/download-file")
     async def workspace_download_file(session_id: str, path: str):

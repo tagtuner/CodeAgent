@@ -99,6 +99,20 @@ def run_web(config: Config, registry: ToolRegistry, skills_ctx: str):
     import uvicorn
     from ui.web.app import create_app
     app = create_app(config=config, registry=registry, skills_context=skills_ctx)
+
+    @app.on_event("startup")
+    async def startup_mcp():
+        # Connect MCP on Uvicorn's runtime loop (avoids cross-loop async object issues).
+        if not config.mcp_servers:
+            return
+        app.state.mcp_client = await connect_mcp(config, registry)
+
+    @app.on_event("shutdown")
+    async def shutdown_mcp():
+        client = getattr(app.state, "mcp_client", None)
+        if client:
+            await client.disconnect_all()
+
     host = config.web.get("host", "0.0.0.0")
     port = config.web.get("port", 4200)
     log.info(f"Starting CodeAgent Web on {host}:{port}")
@@ -141,18 +155,18 @@ def main():
 
     config = Config.load(config_path)
     registry = build_registry(config)
+    mode = sys.argv[1] if len(sys.argv) > 1 else "tui"
 
     skill_mgr = SkillManager(config.skills_dir)
     skills_ctx = skill_mgr.get_context()
 
+    # Web mode connects MCP on app startup loop; other modes connect here.
     mcp_client = None
-    if config.mcp_servers:
+    if config.mcp_servers and mode != "web":
         mcp_client = asyncio.get_event_loop().run_until_complete(connect_mcp(config, registry))
 
     log.info(f"Tools registered: {registry.list_tools()}")
     log.info(f"Skills loaded: {len(skill_mgr.all_skills)}")
-
-    mode = sys.argv[1] if len(sys.argv) > 1 else "tui"
 
     if mode == "tui":
         run_tui(config, registry, skills_ctx)

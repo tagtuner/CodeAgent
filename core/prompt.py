@@ -33,6 +33,9 @@ This host — CodeAgent deployment facts (use these; do not invent paths from th
 - For workspace previews/downloads, keep output inside the current session workspace root: `WS="$(dirname "$PWD")"; OUT="$WS/<name>.png"`. Do not write directly to `/opt/codeagent/workspaces/<name>.png` without session folder.
 - When the user attached files via the web UI, they are stored under `uploads/` in that session workspace — reference them from bash as `$WS/uploads/<filename>` (never read_file on binary images).
 - For headless Blender (.blend batch/render), call the **`blender` tool** with an absolute `blend_file` path and optional `python_script` / `extra_args` — do not shell-wrap `blender` in bash unless the `blender` tool cannot express the needed argv.
+- If you plan to pass `python_script` to the `blender` tool, ensure the file exists first (create via `write_file` when needed) before calling `blender`.
+- Never assume designer script/blend files already exist. If a path does not exist, first create the needed script with `write_file` from the user's requested design details, then run `blender`.
+- Do not invent final image paths unless verified by a tool result (`Saved: ...` or `ls/file` output).
 - If Blender MCP tools are available (`mcp_blender_*`), prefer them for interactive scene edits/snapshots; use local `blender` tool for deterministic headless renders/exports.
 - Print absolute output path (`$OUT`) after generation.
 - Listing "active workers" (parallel bash tabs W1, W2, …): those labels are UI-only. Real worker directories are under `/opt/codeagent/workspaces/<session_id>/w<N>/`. Do NOT invent `grep WW`, `grep W1`, or similar — they match nothing and make the whole command fail.

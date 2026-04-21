@@ -150,28 +150,55 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); min-
 .preview-list {
   border-top: 1px solid var(--border);
   padding: 8px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  max-height: 120px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  max-height: 180px;
   overflow-y: auto;
 }
-.preview-chip {
+.preview-card {
   border: 1px solid var(--border);
   background: var(--surface2);
-  color: var(--text2);
+  border-radius: 8px;
+  padding: 6px;
+}
+.preview-card.active { border-color: var(--accent); }
+.preview-card img {
+  width: 100%;
+  max-height: 86px;
+  object-fit: cover;
   border-radius: 6px;
-  padding: 4px 6px;
-  font-size: 11px;
+  border: 1px solid #2b3340;
+  display: block;
   cursor: pointer;
-  max-width: 190px;
+}
+.preview-name {
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--text2);
+  font-family: var(--mono);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.preview-chip.active {
-  color: var(--text);
-  border-color: var(--accent);
+.preview-actions {
+  margin-top: 6px;
+  display: flex;
+  gap: 6px;
+}
+.preview-action-btn {
+  border: 1px solid var(--border);
+  background: #141c28;
+  color: var(--text2);
+  border-radius: 6px;
+  padding: 3px 7px;
+  font-size: 10px;
+  cursor: pointer;
+}
+.preview-action-btn:hover { color: var(--text); border-color: var(--accent); }
+.preview-action-btn.delete {
+  color: #ff9ea0;
+  border-color: #5b2a2f;
 }
 
 .msg-actions { display: none; gap: 3px; margin-top: 5px; }
@@ -354,6 +381,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); min-
     <span id="modelName" style="font-size:13px;color:var(--text2)">—</span>
     <span class="proc-badge" id="procBadge"><span class="proc-dot"></span><span id="procText">Processing...</span></span>
     <span class="workspace-chip" id="workspacePath" title="">workspace: —</span>
+    <button class="btn" onclick="openBlenderDesktop()">Blender GUI</button>
     <button class="btn" onclick="togglePreviewDock()">Studio</button>
     <button class="btn" onclick="downloadWorkspace()">Download Workspace</button>
     <button class="btn" onclick="newSession()">+ New Chat</button>
@@ -449,6 +477,7 @@ let previewFiles = [];
 let activePreview = '';
 let processingSince = 0;
 let metricsTimer = null;
+let blenderDesktopOpened = false;
 /** @type {{path:string,name:string,size:number}[]} */
 let pendingAttachments = [];
 
@@ -559,15 +588,51 @@ function renderPreviewDock() {
   if (!list || !main) return;
   list.innerHTML = '';
   previewFiles.forEach(rel => {
-    const chip = document.createElement('button');
-    chip.className = 'preview-chip' + (rel === activePreview ? ' active' : '');
-    chip.textContent = rel;
-    chip.title = rel;
-    chip.onclick = function () {
+    const card = document.createElement('div');
+    card.className = 'preview-card' + (rel === activePreview ? ' active' : '');
+    const thumb = document.createElement('img');
+    thumb.src = previewUrl(rel) + '&_ts=' + Date.now();
+    thumb.alt = rel;
+    thumb.title = rel;
+    thumb.onclick = function () {
       activePreview = rel;
       renderPreviewDock();
     };
-    list.appendChild(chip);
+    const name = document.createElement('div');
+    name.className = 'preview-name';
+    name.textContent = rel;
+    name.title = rel;
+
+    const actions = document.createElement('div');
+    actions.className = 'preview-actions';
+    const openBtn = document.createElement('button');
+    openBtn.className = 'preview-action-btn';
+    openBtn.textContent = 'Open';
+    openBtn.onclick = function (e) {
+      e.stopPropagation();
+      window.open(previewUrl(rel), '_blank');
+    };
+    const dlBtn = document.createElement('button');
+    dlBtn.className = 'preview-action-btn';
+    dlBtn.textContent = 'Download';
+    dlBtn.onclick = function (e) {
+      e.stopPropagation();
+      window.open(previewDownloadUrl(rel), '_blank');
+    };
+    const delBtn = document.createElement('button');
+    delBtn.className = 'preview-action-btn delete';
+    delBtn.textContent = 'Delete';
+    delBtn.onclick = function (e) {
+      e.stopPropagation();
+      deletePreviewFile(rel);
+    };
+    actions.appendChild(openBtn);
+    actions.appendChild(dlBtn);
+    actions.appendChild(delBtn);
+    card.appendChild(thumb);
+    card.appendChild(name);
+    card.appendChild(actions);
+    list.appendChild(card);
   });
   if (!activePreview) {
     main.innerHTML = '<div class="preview-empty">No image yet</div>';
@@ -581,19 +646,34 @@ function renderPreviewDock() {
 }
 
 function registerPreviewFiles(paths) {
+  const merged = previewFiles.slice();
   let changed = false;
   paths.forEach(rel => {
-    if (!previewFiles.includes(rel)) {
-      previewFiles.push(rel);
+    if (!merged.includes(rel)) {
+      merged.push(rel);
       changed = true;
     }
   });
-  if (!activePreview && previewFiles.length) {
-    activePreview = previewFiles[previewFiles.length - 1];
-    changed = true;
-  }
-  if (!changed) return;
+  if (!changed && activePreview) return;
+  previewFiles = merged;
+  if (!activePreview && previewFiles.length) activePreview = previewFiles[0];
+  if (activePreview && !previewFiles.includes(activePreview)) activePreview = previewFiles[0] || '';
   togglePreviewDock(true);
+  renderPreviewDock();
+}
+
+function setPreviewFiles(paths) {
+  const uniq = [];
+  (paths || []).forEach(function (p) {
+    const v = String(p || '').trim();
+    if (v && !uniq.includes(v)) uniq.push(v);
+  });
+  previewFiles = uniq;
+  if (!previewFiles.length) {
+    activePreview = '';
+  } else if (!activePreview || !previewFiles.includes(activePreview)) {
+    activePreview = previewFiles[0];
+  }
   renderPreviewDock();
 }
 
@@ -607,17 +687,52 @@ function downloadCurrentPreview() {
   window.open(previewDownloadUrl(activePreview), '_blank');
 }
 
+async function refreshWorkspaceImages() {
+  if (!sessionId) return;
+  try {
+    const data = await fetch(`/api/workspace/${sessionId}/images`).then(r => r.json());
+    const imgs = Array.isArray(data.images) ? data.images : [];
+    setPreviewFiles(imgs);
+    if (imgs.length) togglePreviewDock(true);
+  } catch {}
+}
+
+async function deletePreviewFile(rel) {
+  if (!sessionId || !rel) return;
+  if (!confirm('Delete this image from workspace?')) return;
+  try {
+    const r = await fetch(`/api/workspace/${sessionId}/file?path=${encodeURIComponent(rel)}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error('delete failed');
+    previewFiles = previewFiles.filter(function (x) { return x !== rel; });
+    if (activePreview === rel) activePreview = previewFiles[0] || '';
+    renderPreviewDock();
+    if (!previewFiles.length) resetPreviewDock();
+  } catch (e) {
+    addMsg('error', 'Delete failed: ' + e);
+  }
+}
+
 async function refreshWorkspaceInfo() {
   if (!sessionId) return;
   try {
     const data = await fetch(`/api/workspace/${sessionId}`).then(r => r.json());
     setWorkspacePath(data.workspace || '');
+    refreshWorkspaceImages();
   } catch {}
 }
 
 function downloadWorkspace() {
   if (!sessionId) return;
   window.open(`/api/workspace/${sessionId}/download`, '_blank');
+}
+
+function blenderDesktopUrl() {
+  const host = window.location.hostname || '127.0.0.1';
+  return `http://${host}:6080/vnc.html?autoconnect=true&resize=scale&view_only=false`;
+}
+
+function openBlenderDesktop() {
+  window.open(blenderDesktopUrl(), '_blank');
 }
 
 async function loadSessions() {
@@ -720,8 +835,10 @@ async function newSession() {
     document.getElementById('msgCount').textContent = '0';
     resetTerminal();
     resetPreviewDock();
+    blenderDesktopOpened = false;
     hideTerminal();
     addMsg('status', 'New session started — ' + sessionId);
+    refreshWorkspaceImages();
   } catch (e) {
     addMsg('error', 'Failed to create session: ' + e);
   }
@@ -735,6 +852,7 @@ async function switchSession(id) {
   document.getElementById('messages').innerHTML = '';
   resetTerminal();
   resetPreviewDock();
+  blenderDesktopOpened = false;
   hideTerminal();
   document.querySelectorAll('.session-item').forEach(el => {
     el.classList.toggle('active', el.dataset.sid === id);
@@ -749,6 +867,7 @@ async function switchSession(id) {
       });
       document.getElementById('msgCount').textContent = count;
     }
+    refreshWorkspaceImages();
   } catch {
     addMsg('status', 'Switched to session ' + id);
   }
@@ -869,6 +988,11 @@ function handleEvent(evt) {
       removeContinueHint();
       updateLiveStats();
       addMsg('tool', 'Calling <b>' + escHtml(evt.tool_name) + '</b>', 'tool-start');
+      if (String(evt.tool_name || '').toLowerCase() === 'blender' && !blenderDesktopOpened) {
+        blenderDesktopOpened = true;
+        openBlenderDesktop();
+        addMsg('status', 'Blender GUI opened: ' + blenderDesktopUrl());
+      }
       break;
     case 'tool_result': {
       updateLiveStats();
@@ -879,6 +1003,7 @@ function handleEvent(evt) {
         const paths = extractWorkspaceImagePaths(raw);
         if (paths.length) addImagePreview(paths);
         else maybeTriggerPreviewFromToolResult(raw);
+        refreshWorkspaceImages();
         showContinueHint();
       });
       break;
@@ -920,6 +1045,7 @@ function handleEvent(evt) {
       break;
     case 'workspace':
       setWorkspacePath(evt.metadata && evt.metadata.path ? String(evt.metadata.path) : '');
+      refreshWorkspaceImages();
       break;
     case 'status':
       if (processing) {
@@ -939,6 +1065,7 @@ function handleEvent(evt) {
       break;
     case 'done':
       resetProcessingUI();
+      refreshWorkspaceImages();
       break;
   }
 }

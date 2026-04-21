@@ -2,7 +2,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
+import socket
+import time
 from dataclasses import dataclass
 from typing import AsyncIterator
 
@@ -72,6 +75,9 @@ class Agent:
         self._cancelled = False
         self.worker_pool = WorkerPool(work_dir=worker_dir or "/tmp/codeagent-worker")
         self._last_shell_output: str = ""
+        self._blender_probe_last_ts: float = 0.0
+        self._blender_probe_last_ok: bool = True
+        self._blender_probe_target: str = "localhost:9876"
 
     async def run(self, user_message: str) -> AsyncIterator[AgentEvent]:
         self._last_shell_output = ""
@@ -90,6 +96,17 @@ class Agent:
             for t in mcp_tools:
                 if t not in tool_names:
                     tool_names.append(t)
+            if (
+                ("mcp_blender_" in user_message.lower() or "viewport" in user_message.lower())
+                and not any(t.startswith("mcp_blender_") for t in mcp_tools)
+            ):
+                yield AgentEvent(
+                    type="status",
+                    content=(
+                        "Blender MCP addon is not reachable at "
+                        f"{self._blender_probe_target}; using local blender tool instead."
+                    ),
+                )
         log.info("tools active session=%s count=%s", sid, len(tool_names))
 
         if not tool_names:
@@ -119,6 +136,7 @@ class Agent:
         finish_text = ""
         last_tool_name = ""
         last_tool_result = ""
+        last_generated_file_abs = ""
         fast_finalize_after_tool = category in ("system", "coding") and not image_task
         finalize_after_tool = False
 
@@ -207,6 +225,8 @@ class Agent:
                         break
 
                     tc_args = self._fix_placeholder_paths(tc_name, tc_args)
+                    if tc_name == "blender":
+                        tc_args = self._normalize_blender_args(tc_args)
                     sig_obj = {"name": tc_name, "arguments": tc_args}
                     tc_signature = json.dumps(sig_obj, sort_keys=True, ensure_ascii=False)
                     if tc_signature == last_successful_signature:
@@ -250,8 +270,13 @@ class Agent:
 
                     if tc_name == "bash":
                         command = tc_args.get("command", "")
+                        if last_generated_file_abs:
+                            command = self._rewrite_bash_for_saved_file(command, last_generated_file_abs)
                         if image_task:
                             command = self._normalize_image_command(command)
+                            tc_args = dict(tc_args)
+                            tc_args["command"] = command
+                        elif command != tc_args.get("command", ""):
                             tc_args = dict(tc_args)
                             tc_args["command"] = command
                         slot = self.worker_pool.create()
@@ -321,7 +346,23 @@ class Agent:
                         except Exception as e:
                             result_str = f"Error: {e}"
                         else:
-                            last_successful_signature = tc_signature
+                            if tc_name == "blender" and "python_script not found" in result_str.lower():
+                                force_tool_note = (
+                                    "The blender python_script path does not exist. "
+                                    "Create the script first using write_file with valid Python from user design requirements, "
+                                    "then call blender again."
+                                )
+                            elif tc_name == "blender" and "blend_file not found" in result_str.lower():
+                                force_tool_note = (
+                                    "The blender blend_file path does not exist. "
+                                    "Either create it first (save .blend via script) or run blender without blend_file if appropriate."
+                                )
+                            else:
+                                last_successful_signature = tc_signature
+                            if tc_name == "blender":
+                                saved_abs = self._extract_saved_file_from_blender_result(result_str, tc_args)
+                                if saved_abs:
+                                    last_generated_file_abs = saved_abs
                         log.info("tool done session=%s tool=%s", sid, tc_name)
 
                     yield AgentEvent(
@@ -400,6 +441,9 @@ class Agent:
         msg = message.lower()
 
         if "blender" in msg or "mcp_blender_" in msg or "viewport" in msg:
+            if not self._is_blender_addon_reachable():
+                # Avoid guaranteed MCP failures when addon socket is not up.
+                return []
             core = [
                 "mcp_blender_get_scene_info",
                 "mcp_blender_get_object_info",
@@ -441,6 +485,40 @@ class Agent:
             return selected or [t for t in all_mcp if t.startswith("mcp_blender_")][:4]
 
         return all_mcp
+
+    def _is_blender_addon_reachable(self, cache_ttl_sec: float = 6.0) -> bool:
+        """
+        Check Blender addon socket availability (default localhost:9876).
+        Cached briefly to avoid repeated socket probes in a single run.
+        """
+        now = time.time()
+        if (now - self._blender_probe_last_ts) < cache_ttl_sec:
+            return self._blender_probe_last_ok
+
+        host = "localhost"
+        port = 9876
+        try:
+            for srv in (self.config.mcp_servers or []):
+                if str(srv.get("name", "")).lower() != "blender":
+                    continue
+                env = srv.get("env") or {}
+                host = str(env.get("BLENDER_HOST", host))
+                port = int(env.get("BLENDER_PORT", port))
+                break
+        except Exception:
+            pass
+
+        self._blender_probe_target = f"{host}:{port}"
+        ok = False
+        try:
+            with socket.create_connection((host, port), timeout=0.35):
+                ok = True
+        except Exception:
+            ok = False
+
+        self._blender_probe_last_ts = now
+        self._blender_probe_last_ok = ok
+        return ok
 
     def _extract_tool_calls(self, text: str) -> list[tuple[str, dict]]:
         calls = []
@@ -517,6 +595,109 @@ class Agent:
         out = dict(args)
         out["path"] = resolved
         return out
+
+    def _session_workspace_root(self) -> str:
+        root = str(self.config.session.get("workspace_dir", "/opt/codeagent/workspaces")).rstrip("/")
+        sid = getattr(self.session, "id", "") or "session"
+        return f"{root}/{sid}"
+
+    def _normalize_blender_args(self, args: dict) -> dict:
+        """Normalize blender args: resolve placeholders, stabilize output path, ensure render flags."""
+        out = dict(args or {})
+        sid = getattr(self.session, "id", "") or "session"
+
+        for key in ("blend_file", "python_script"):
+            v = out.get(key)
+            if isinstance(v, str) and v:
+                out[key] = (
+                    v.replace("<session_id>", sid)
+                    .replace("{session_id}", sid)
+                    .replace("${session_id}", sid)
+                )
+
+        extras = out.get("extra_args")
+        if not isinstance(extras, list) or not extras:
+            return out
+        norm = list(extras)
+        has_output = False
+        has_frame_flag = False
+        has_format_flag = False
+        out_idx = -1
+
+        for i, tok in enumerate(norm):
+            s = str(tok)
+            if s == "-o" and i + 1 < len(norm):
+                has_output = True
+                out_idx = i + 1
+            elif s in ("-f", "-a"):
+                has_frame_flag = True
+            elif s == "-F":
+                has_format_flag = True
+
+        if out_idx != -1:
+            val = str(norm[out_idx] or "")
+            val = (
+                val.replace("<session_id>", sid)
+                .replace("{session_id}", sid)
+                .replace("${session_id}", sid)
+            )
+            if val.startswith("//"):
+                ws = self._session_workspace_root()
+                val = f"{ws}/{val[2:].lstrip('/')}"
+            # Blender appends frame number if no #; enforce predictable naming.
+            if "#" not in val:
+                low = val.lower()
+                for ext in (".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".exr"):
+                    if low.endswith(ext):
+                        val = val[: -len(ext)]
+                        break
+                val = val + "####"
+            norm[out_idx] = val
+
+        if has_output and not has_format_flag:
+            norm.extend(["-F", "PNG"])
+        if has_output and not has_frame_flag:
+            norm.extend(["-f", "1"])
+        out["extra_args"] = norm
+        return out
+
+    def _rewrite_bash_for_saved_file(self, command: str, saved_abs_path: str) -> str:
+        cmd = str(command or "")
+        abs_path = str(saved_abs_path or "").strip()
+        if not cmd or not abs_path or "/" not in abs_path:
+            return cmd
+        base = abs_path.rsplit("/", 1)[-1]
+        if not base or base not in cmd:
+            return cmd
+        pat = rf"(?<![\w./-]){re.escape(base)}(?![\w./-])"
+        return re.sub(pat, f'"{abs_path}"', cmd)
+
+    def _extract_saved_file_from_blender_result(self, result: str, tc_args: dict) -> str:
+        """Resolve Blender 'Saved:' output into an absolute file path when possible."""
+        text = str(result or "")
+        m = re.search(r"Saved:\s*'([^']+)'", text)
+        if not m:
+            return ""
+        saved = m.group(1).strip()
+        if not saved:
+            return ""
+        if saved.startswith("/"):
+            return saved
+        out_spec = ""
+        extras = tc_args.get("extra_args") if isinstance(tc_args, dict) else None
+        if isinstance(extras, list):
+            for i in range(len(extras) - 1):
+                if str(extras[i]) == "-o":
+                    out_spec = str(extras[i + 1] or "").strip()
+                    break
+        if out_spec.startswith("/"):
+            base_dir = out_spec.rsplit("/", 1)[0]
+            if base_dir:
+                return f"{base_dir}/{saved.rsplit('/', 1)[-1]}"
+        if out_spec.startswith("//"):
+            ws = self._session_workspace_root()
+            return f"{ws}/{saved.rsplit('/', 1)[-1]}"
+        return f"{self._session_workspace_root()}/{saved.rsplit('/', 1)[-1]}"
 
     def _path_from_last_shell_output(self, bad_path: str) -> str:
         text = self._last_shell_output

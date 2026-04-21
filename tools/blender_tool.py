@@ -7,7 +7,8 @@ from pathlib import Path
 from .base import BaseTool
 
 # Extra CLI tokens after `blender -b <file> [-P script.py] ...` — no shell; block injection / inline Python flags.
-_EXTRA_ARG_RE = re.compile(r"^[a-zA-Z0-9_./:=+@-]+$")
+# Allow Blender output patterns like "render_####" in argv tokens.
+_EXTRA_ARG_RE = re.compile(r"^[a-zA-Z0-9_./:=+@#-]+$")
 
 
 def _safe_extra_arg(s: str) -> bool:
@@ -39,7 +40,8 @@ def _resolve_existing_file(label: str, path: str, exts: frozenset[str]) -> Path 
 class BlenderTool(BaseTool):
     name = "blender"
     description = (
-        "Run Blender in background mode (-b) with no GUI. Use for rendering or batch tasks from a .blend file. "
+        "Run Blender in background mode (-b) with no GUI. Use for rendering or batch tasks from a .blend file "
+        "or from Blender's default startup scene when no blend_file is provided. "
         "Prefer this over raw bash for `blender` so arguments stay structured and timeouts apply. "
         "Paths must be absolute (e.g. under the session workspace). Optional `python_script` runs with Blender's `-P`. "
         "`extra_args` are appended as separate argv tokens only (e.g. '-o', '//render_####', '-F', 'PNG', '-f', '1'); "
@@ -50,7 +52,7 @@ class BlenderTool(BaseTool):
         "properties": {
             "blend_file": {
                 "type": "string",
-                "description": "Absolute path to an existing .blend file",
+                "description": "Optional absolute path to an existing .blend file. Leave empty to use default startup scene.",
             },
             "python_script": {
                 "type": "string",
@@ -70,7 +72,7 @@ class BlenderTool(BaseTool):
                 "description": "Short label for logs/UI (not passed to Blender)",
             },
         },
-        "required": ["blend_file"],
+        "required": [],
     }
 
     def __init__(self, binary: str | None = None, default_timeout: int = 600):
@@ -79,7 +81,7 @@ class BlenderTool(BaseTool):
 
     async def execute(
         self,
-        blend_file: str,
+        blend_file: str = "",
         python_script: str = "",
         extra_args: list | None = None,
         timeout: int | None = None,
@@ -92,11 +94,16 @@ class BlenderTool(BaseTool):
                 "Install blender or set tools.blender.binary in config.yaml"
             )
 
-        bf = _resolve_existing_file("blend_file", blend_file, frozenset({".blend"}))
-        if isinstance(bf, str):
-            return bf
+        bf: Path | None = None
+        if blend_file and str(blend_file).strip():
+            bf_res = _resolve_existing_file("blend_file", blend_file, frozenset({".blend"}))
+            if isinstance(bf_res, str):
+                return bf_res
+            bf = bf_res
 
-        cmd: list[str] = [self.binary, "-b", str(bf)]
+        cmd: list[str] = [self.binary, "-b"]
+        if bf:
+            cmd.append(str(bf))
         if python_script and str(python_script).strip():
             ps = _resolve_existing_file("python_script", python_script, frozenset({".py"}))
             if isinstance(ps, str):
@@ -119,7 +126,7 @@ class BlenderTool(BaseTool):
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
-                cwd=str(bf.parent),
+                cwd=(str(bf.parent) if bf else None),
             )
             raw, _ = await asyncio.wait_for(proc.communicate(), timeout=tout)
         except asyncio.TimeoutError:
