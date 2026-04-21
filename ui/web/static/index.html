@@ -237,6 +237,48 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); min-
   box-shadow: 0 -6px 20px rgba(0,0,0,0.25);
   flex-shrink: 0;
 }
+.attach-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.attach-toolbar .btn-small {
+  padding: 5px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+.attach-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.attach-chip {
+  font-size: 11px;
+  color: var(--text2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 8px 3px 10px;
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.attach-chip button {
+  background: none;
+  border: none;
+  color: var(--red);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+}
 .input-row {
   display: flex;
   gap: 8px;
@@ -347,6 +389,16 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); min-
       <div class="stat"><span class="stat-icon">&#8595;</span> <span class="stat-value" id="statCompletion">0</span> <span class="stat-label">completion</span></div>
     </div>
     <div class="input-area">
+      <div class="attach-toolbar" id="attachToolbar">
+        <input type="file" id="imageAttachInput" accept="image/*" multiple style="display:none"
+               onchange="handleAttachPicker(this)">
+        <input type="file" id="fileAttachInput"
+               accept=".png,.jpg,.jpeg,.webp,.gif,.svg,.pdf,.zip,.txt,.md,.json,.csv,.blend,.glb,image/*" multiple style="display:none"
+               onchange="handleAttachPicker(this)">
+        <button type="button" class="btn btn-small" onclick="document.getElementById('imageAttachInput').click()">Image</button>
+        <button type="button" class="btn btn-small" onclick="document.getElementById('fileAttachInput').click()">File</button>
+        <div class="attach-chips" id="attachChips"></div>
+      </div>
       <div class="input-row">
         <textarea id="chatInput" placeholder="Type a message... (Enter to send, Shift+Enter new line)"
                onkeydown="handleComposerKeydown(event)"></textarea>
@@ -370,6 +422,8 @@ let workspacePath = '';
 let previewFiles = [];
 let activePreview = '';
 let processingSince = 0;
+/** @type {{path:string,name:string,size:number}[]} */
+let pendingAttachments = [];
 
 async function init() {
   try {
@@ -521,10 +575,74 @@ async function loadSessions() {
   } catch {}
 }
 
+function clearPendingAttachments() {
+  pendingAttachments = [];
+  renderAttachChips();
+}
+
+function renderAttachChips() {
+  const el = document.getElementById('attachChips');
+  if (!el) return;
+  el.innerHTML = '';
+  pendingAttachments.forEach((a) => {
+    const chip = document.createElement('span');
+    chip.className = 'attach-chip';
+    chip.title = a.path;
+    const label = document.createElement('span');
+    label.textContent = a.name || a.path;
+    label.style.overflow = 'hidden';
+    label.style.textOverflow = 'ellipsis';
+    const rm = document.createElement('button');
+    rm.type = 'button';
+    rm.setAttribute('aria-label', 'Remove');
+    rm.textContent = '\u00d7';
+    const pathKeep = a.path;
+    rm.onclick = function () {
+      pendingAttachments = pendingAttachments.filter(function (x) { return x.path !== pathKeep; });
+      renderAttachChips();
+    };
+    chip.appendChild(label);
+    chip.appendChild(rm);
+    el.appendChild(chip);
+  });
+}
+
+async function handleAttachPicker(inputEl) {
+  const files = Array.from(inputEl.files || []);
+  inputEl.value = '';
+  if (!files.length) return;
+  if (!sessionId) {
+    addMsg('error', 'No session — start a chat first.');
+    return;
+  }
+  const fd = new FormData();
+  files.forEach(f => fd.append('files', f));
+  try {
+    const r = await fetch('/api/workspace/' + encodeURIComponent(sessionId) + '/upload', { method: 'POST', body: fd });
+    const data = await r.json();
+    if (!r.ok) {
+      addMsg('error', 'Upload failed: ' + (data.detail || r.statusText));
+      return;
+    }
+    (data.errors || []).forEach(function (e) { addMsg('error', 'Upload: ' + e); });
+    (data.files || []).forEach(function (f) {
+      pendingAttachments.push({ path: f.path, name: f.name || f.path, size: f.size || 0 });
+    });
+    renderAttachChips();
+    if (data.files && data.files.length) {
+      var imgs = data.files.filter(function (f) { return /\.(png|jpe?g|gif|webp)$/i.test(f.path); });
+      if (imgs.length) registerPreviewFiles(imgs.map(function (f) { return f.path; }));
+    }
+  } catch (e) {
+    addMsg('error', 'Upload error: ' + e);
+  }
+}
+
 async function newSession() {
   try {
     const data = await fetch('/api/session/new', { method: 'POST' }).then(r => r.json());
     sessionId = data.session_id;
+    clearPendingAttachments();
     setWorkspacePath(data.workspace || '');
     connectWS();
     document.getElementById('messages').innerHTML = '';
@@ -540,6 +658,7 @@ async function newSession() {
 
 async function switchSession(id) {
   sessionId = id;
+  clearPendingAttachments();
   refreshWorkspaceInfo();
   connectWS();
   document.getElementById('messages').innerHTML = '';
@@ -756,7 +875,8 @@ function handleEvent(evt) {
 function sendMessage() {
   const input = document.getElementById('chatInput');
   const msg = input.value.trim();
-  if (!msg || !ws || ws.readyState !== 1) return;
+  const hasAttach = pendingAttachments.length > 0;
+  if ((!msg && !hasAttach) || !ws || ws.readyState !== 1) return;
 
   if (workerActive) {
     addMsg('user', msg);
@@ -776,10 +896,21 @@ function sendMessage() {
   streamStart = Date.now();
   streamTokens = 0;
   resetStats();
-  addMsg('user', msg);
+  var userDisplay = msg || '(uploaded files)';
+  if (hasAttach) {
+    userDisplay += '\n\nAttached: ' + pendingAttachments.map(function (a) { return a.name || a.path; }).join(', ');
+  }
+  addMsg('user', userDisplay);
   showTyping();
-  ws.send(JSON.stringify({ message: msg }));
+  var payload = { message: msg };
+  if (hasAttach) {
+    payload.attachments = pendingAttachments.map(function (a) {
+      return { path: a.path, name: a.name };
+    });
+  }
+  ws.send(JSON.stringify(payload));
   input.value = '';
+  clearPendingAttachments();
   const mc = document.getElementById('msgCount');
   mc.textContent = parseInt(mc.textContent) + 1;
 }

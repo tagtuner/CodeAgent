@@ -3,7 +3,9 @@ import json
 import asyncio
 import shutil
 from pathlib import Path
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from typing import Annotated
+
+from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -12,6 +14,7 @@ from core.llm import LLMClient
 from core.agent import Agent, AgentEvent
 from core.session import Session
 from core.router import Router
+from skills.loader import SkillLoader
 from tools.base import ToolRegistry
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -23,6 +26,13 @@ _llm_fast: LLMClient | None = None
 _llm_opus: LLMClient | None = None
 _skills_context: str = ""
 _sessions: dict[str, Session] = {}
+
+# Workspace uploads (composer → session uploads/)
+_UPLOAD_MAX_BYTES = 30 * 1024 * 1024
+_UPLOAD_ALLOWED_SUFFIXES = frozenset({
+    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".pdf", ".zip",
+    ".txt", ".md", ".json", ".csv", ".blend", ".glb",
+})
 
 
 def _workspace_root(config: Config) -> Path:
@@ -74,6 +84,98 @@ def _resolve_workspace_file(config: Config, session_id: str, rel_path: str) -> P
             latest_mtime = mt
             latest = m
     return latest
+
+
+def _sanitize_upload_filename(name: str) -> str:
+    base = Path(name).name
+    out = []
+    for ch in base:
+        if ch.isalnum() or ch in "._-":
+            out.append(ch)
+    s = "".join(out).strip("._")[:120]
+    if not s:
+        return ""
+    suf = Path(s).suffix.lower()
+    if not suf or suf not in _UPLOAD_ALLOWED_SUFFIXES:
+        return ""
+    return s
+
+
+def _unique_upload_path(uploads_dir: Path, name: str) -> Path:
+    p = uploads_dir / name
+    if not p.exists():
+        return p
+    stem, suf = Path(name).stem, Path(name).suffix
+    for i in range(2, 10_000):
+        cand = uploads_dir / f"{stem}_{i}{suf}"
+        if not cand.exists():
+            return cand
+    return uploads_dir / f"{stem}_x{name}"
+
+
+def _validate_client_attachments(config: Config, session_id: str, items: list) -> list[dict]:
+    """Only accept paths under uploads/ that exist (client cannot inject arbitrary paths)."""
+    if not items:
+        return []
+    ws = _workspace_for_session(config, session_id).resolve()
+    out: list[dict] = []
+    for it in items[:24]:
+        if not isinstance(it, dict):
+            continue
+        rel = str(it.get("path", "")).strip().lstrip("/").replace("\\", "/")
+        if ".." in rel or not rel.startswith("uploads/"):
+            continue
+        p = (ws / rel).resolve()
+        try:
+            p.relative_to(ws)
+        except Exception:
+            continue
+        if p.is_file():
+            try:
+                sz = p.stat().st_size
+            except Exception:
+                sz = 0
+            out.append({
+                "path": rel,
+                "name": str(it.get("name") or p.name),
+                "size": sz,
+            })
+    return out
+
+
+def _triggered_skills_context(config: Config, user_message: str, max_chars: int = 2000) -> str:
+    """Inject skill bodies when trigger keywords appear in the user message (per request)."""
+    skills = SkillLoader.load_dir(config.skills_dir)
+    if not skills:
+        return ""
+    msg_l = user_message.lower()
+    parts: list[str] = []
+    total = 0
+    for s in skills:
+        hit = any(kw.lower() in msg_l for kw in s.trigger_keywords)
+        if not hit:
+            continue
+        block = f"## Skill: {s.name}\n{s.compact}\n"
+        if total + len(block) > max_chars:
+            break
+        parts.append(block)
+        total += len(block)
+    return "\n".join(parts)
+
+
+def _augment_user_message_with_attachments(user_text: str, attachments: list[dict]) -> str:
+    if not attachments:
+        return user_text
+    lines = [
+        "[User attached files — already saved in this chat's workspace. "
+        "Bash workers run under .../wN; use WS=\"$(dirname \"$PWD\")\" for workspace root. "
+        "Use identify/file/ls on images — do not read_file on binary images.]",
+    ]
+    for a in attachments:
+        lines.append(f"- {a['path']} (original: {a.get('name', '')})")
+    lines.append("")
+    lines.append(user_text.strip())
+    return "\n".join(lines)
 
 
 def create_app(
@@ -223,6 +325,55 @@ def create_app(
             return JSONResponse({"error": "File not found"}, status_code=404)
         return FileResponse(str(p), filename=p.name)
 
+    @app.post("/api/workspace/{session_id}/upload")
+    async def workspace_upload(
+        session_id: str,
+        files: Annotated[list[UploadFile], File(...)],
+    ):
+        """Save composer uploads under <workspace>/uploads/ (images + small design files)."""
+        ws = _ensure_workspace(config, session_id)
+        uploads = ws / "uploads"
+        uploads.mkdir(parents=True, exist_ok=True)
+        saved: list[dict] = []
+        errors: list[str] = []
+        for uf in files[:16]:
+            raw_name = uf.filename or ""
+            safe = _sanitize_upload_filename(raw_name)
+            if not safe:
+                errors.append(f"rejected type/name: {raw_name or '(empty)'}")
+                await uf.close()
+                continue
+            dest = _unique_upload_path(uploads, safe)
+            size = 0
+            try:
+                with dest.open("wb") as out:
+                    while True:
+                        chunk = await uf.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        if size > _UPLOAD_MAX_BYTES:
+                            raise OSError("file too large")
+                        out.write(chunk)
+                rel = dest.relative_to(ws).as_posix()
+                saved.append({"path": rel, "name": raw_name, "size": size})
+            except OSError as e:
+                if dest.exists():
+                    try:
+                        dest.unlink()
+                    except Exception:
+                        pass
+                errors.append(f"{raw_name}: {e}")
+            except Exception as e:
+                if dest.exists():
+                    try:
+                        dest.unlink()
+                    except Exception:
+                        pass
+                errors.append(f"{raw_name}: {e}")
+            await uf.close()
+        return {"ok": bool(saved), "files": saved, "errors": errors}
+
     @app.websocket("/ws/{session_id}")
     async def ws_chat(websocket: WebSocket, session_id: str):
         await websocket.accept()
@@ -345,12 +496,26 @@ def create_app(
                 if msg is None:
                     break
 
-                user_text = msg.get("message", "")
-                if not user_text:
+                user_text = (msg.get("message") or "").strip()
+                raw_attachments = msg.get("attachments") or []
+                validated = _validate_client_attachments(config, session_id, raw_attachments)
+                if not user_text and not validated:
                     continue
+                if not user_text and validated:
+                    user_text = (
+                        "Use the uploaded files in this workspace and complete the design task "
+                        "(variants, patterns, or edits as appropriate)."
+                    )
+                user_text = _augment_user_message_with_attachments(user_text, validated)
 
                 agent._cancelled = False
                 agent.approval_queue = asyncio.Queue()
+                triggered_skills = _triggered_skills_context(config, user_text)
+                base_ctx = (_skills_context or "").strip()
+                if triggered_skills:
+                    agent.skills_context = (base_ctx + "\n\n" + triggered_skills).strip() if base_ctx else triggered_skills
+                else:
+                    agent.skills_context = base_ctx
                 try:
                     await websocket.send_text(json.dumps({"type": "workspace", "metadata": {"path": str(ws_dir)}}))
                 except Exception:

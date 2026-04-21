@@ -14,7 +14,7 @@ Classify the user message into exactly one category. Reply with ONLY the categor
 
 Categories:
 - simple: greetings, general questions, explanations, web searches, looking up information
-- coding: writing code, scripts, files, debugging, programming tasks
+- coding: writing code, scripts, files, debugging, programming tasks; design/image work including uploaded attachments (patterns, variants, ImageMagick/Blender)
 - ebs: Oracle EBS, SQL queries, database tables, PO/AP/AR/GL/INV modules, suppliers, invoices
 - system: server administration, git, services, disk, network, system commands; also workers/processes on THIS server (often CodeAgent bash worker tabs W1, W2, …, not OpenPAI/Kubernetes unless user names them)
 
@@ -38,6 +38,7 @@ KEYWORD_PATTERNS = {
         r"debug|refactor|implement|create\s+a?\s*(file|script)|python|bash|"
         r"javascript|typescript|html|css|api|endpoint|parse|regex|"
         r"image|logo|design|mockup|png|jpg|jpeg|gif|webp|svg|draw|"
+        r"upload|uploaded|attachment|variation|pattern|variants?|"
         r"generate\s+(an?\s+)?image|create\s+(an?\s+)?image|resize|thumbnail)\b",
         re.IGNORECASE,
     ),
@@ -82,6 +83,14 @@ class Router:
             "create", "generate", "make", "build", "edit", "resize", "convert",
         )
         if any(w in msg_lower for w in image_words) and any(v in msg_lower for v in action_words):
+            return "coding"
+
+        if any(w in msg_lower for w in ("upload", "uploaded", "attachment")) and any(
+            w in msg_lower for w in (
+                "design", "pattern", "variant", "image", "logo", "mockup", "banner",
+                "convert", "resize", "imagemagick", "blender",
+            )
+        ):
             return "coding"
 
         simple_patterns = (
