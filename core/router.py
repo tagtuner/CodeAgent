@@ -37,7 +37,7 @@ KEYWORD_PATTERNS = {
         r"\b(write\s+a?\s*(script|function|class|program|code|file)|"
         r"debug|refactor|implement|create\s+a?\s*(file|script)|python|bash|"
         r"javascript|typescript|html|css|api|endpoint|parse|regex|"
-        r"blender|\.blend|"
+        r"blender|blender\s*mcp|viewport|\.blend|"
         r"image|logo|design|mockup|png|jpg|jpeg|gif|webp|svg|draw|"
         r"upload|uploaded|attachment|variation|pattern|variants?|"
         r"generate\s+(an?\s+)?image|create\s+(an?\s+)?image|resize|thumbnail)\b",

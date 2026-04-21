@@ -123,11 +123,44 @@ class MCPClient:
         await server._proc.stdin.drain()
         if notify:
             return {}
-        raw = await asyncio.wait_for(server._proc.stdout.readline(), timeout=30)
-        data = json.loads(raw.decode())
+        data = await self._read_jsonrpc_response(server, timeout=30)
         if "error" in data:
             raise RuntimeError(f"MCP error: {data['error']}")
         return data.get("result", {})
+
+    async def _read_jsonrpc_response(self, server: MCPServer, timeout: int = 30) -> dict:
+        """Read MCP stdio response, skipping non-JSON/noise lines from wrappers."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        last_noise = ""
+        while True:
+            remain = deadline - asyncio.get_running_loop().time()
+            if remain <= 0:
+                if last_noise:
+                    raise RuntimeError(f"MCP timeout waiting JSON response. Last output: {last_noise[:180]}")
+                raise asyncio.TimeoutError("MCP stdio response timeout")
+            raw = await asyncio.wait_for(server._proc.stdout.readline(), timeout=remain)
+            if not raw:
+                err = ""
+                try:
+                    if server._proc.stderr:
+                        err_raw = await asyncio.wait_for(server._proc.stderr.readline(), timeout=0.25)
+                        err = err_raw.decode(errors="replace").strip()
+                except Exception:
+                    pass
+                if err:
+                    raise RuntimeError(f"MCP server closed stream. stderr: {err}")
+                raise RuntimeError("MCP server closed stream without response")
+            txt = raw.decode(errors="replace").strip()
+            if not txt:
+                continue
+            if not txt.startswith("{"):
+                last_noise = txt
+                continue
+            try:
+                return json.loads(txt)
+            except json.JSONDecodeError:
+                last_noise = txt
+                continue
 
     async def _jsonrpc_sse(self, server: MCPServer, method: str, params: dict) -> dict:
         resp = await self._http.post(f"{server.url}/{method.replace('/', '_')}", json={

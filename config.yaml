@@ -73,7 +73,11 @@ tools:
   ebs:
     enabled: true
 
-mcp_servers: []
+mcp_servers:
+  - name: blender
+    command: /root/.local/bin/blender-mcp
+    env:
+      DISABLE_TELEMETRY: "true"
 
 skills_dir: /opt/codeagent/skills/library
 

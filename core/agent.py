@@ -79,6 +79,15 @@ class Agent:
         yield AgentEvent(type="status", content=f"category:{category}")
 
         tool_names = self.router.get_tools(category)
+        # Include discovered MCP tools for practical categories, otherwise they stay unreachable.
+        if category in ("coding", "system", "ebs"):
+            mcp_tools = [
+                t for t in self.registry.list_tools()
+                if t.startswith("mcp_")
+            ]
+            for t in mcp_tools:
+                if t not in tool_names:
+                    tool_names.append(t)
 
         if not tool_names:
             async for event in self._simple_response(user_message):
