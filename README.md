@@ -10,7 +10,7 @@ Most AI coding assistants (OpenCode, Cursor, etc.) waste **14,000+ tokens** on s
 
 - **Smart 3-Model Router**: 1.5B classifies → routes to **14B main** (coding/system), **27B Opus** (EBS-heavy), or **1.5B** (greetings/fast summaries)
 - **Agentic Tool Loop**: LLM calls tools, gets results, reasons, calls more tools — like a real agent
-- **13 Built-in Tools**: bash, file read/write/edit, glob search, git, Oracle DB, EBS module guide
+- **17 Built-in Tools**: bash + blender, file read/write/edit/glob, git, Oracle DB, EBS guides/status, web search/fetch
 - **Parallel Multi-Worker Terminals**: Unlimited concurrent bash workers with tabbed UI (W1, W2, …), each with its own persistent shell session — like tmux split panes in a browser (still subject to server RAM/ulimit)
 - **Tool Approval System**: Every tool call requires user approval before execution (Allow/Deny)
 - **Stop/Cancel**: Abort any ongoing AI response or worker mid-stream
@@ -23,6 +23,7 @@ Most AI coding assistants (OpenCode, Cursor, etc.) waste **14,000+ tokens** on s
 - **Mid-Task Queries**: Ask questions while workers are running — AI responds based on live terminal state
 - **Web UI responsiveness**: Streams assistant text as plain monospace during generation; markdown is applied when the assistant message completes. After a tool result, a short “next model step” status line shows that the agent is still working until the next tokens arrive.
 - **Live Design Studio**: Resizable right-side preview panel for generated images, with per-file open/download and workspace zip download
+- **Composer Uploads**: Upload images/files directly from chat composer into per-session workspace `uploads/`
 - **Workspace-Aware Artifacts**: Per-session workspace directories (`/opt/codeagent/workspaces/<session_id>`) with API endpoints for file preview and downloads
 - **Processing Badge**: Header shows live stage + elapsed seconds (routing, generating, approval wait, tool run, finalizing)
 - **Fast Completion Summaries**: Post-tool summaries use a fast model path with strict timeout and deterministic fallback
@@ -345,7 +346,15 @@ MCP tools are auto-discovered and registered on startup.
 
 ## Changelog
 
-### v0.7 — Fast Mode + Studio Workflow (Latest)
+### v0.8 — Uploads + Blender Tooling (Latest)
+- **Composer uploads**: Added image/file upload buttons in web composer with workspace `uploads/` persistence
+- **Attachment-aware execution**: WebSocket message payload now carries validated attachment paths (server-side restricted to `uploads/`)
+- **Per-request skill trigger injection**: Skill markdown is activated dynamically from request keywords before each run
+- **Dedicated Blender tool**: New structured `blender` tool for headless `.blend` runs (safe argv, timeout, and absolute-path checks)
+- **Design routing upgrades**: Router now recognizes upload/attachment/pattern/variation and Blender cues for coding flow
+- **Design skill pack**: Added `design_studio_workflows.md` for ImageMagick/Blender workspace-safe workflows
+
+### v0.7 — Fast Mode + Studio Workflow
 - **Fast mode defaults**: coding/system tasks prefer 14B main; EBS stays on Opus when needed
 - **Latency tuning**: lower history window (`2048`) + fewer max iterations (`4`) for faster first response
 - **Duplicate-call guard**: skips repeated identical tool calls in the same turn
