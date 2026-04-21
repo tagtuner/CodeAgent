@@ -10,7 +10,7 @@ Most AI coding assistants (OpenCode, Cursor, etc.) waste **14,000+ tokens** on s
 
 - **Smart 3-Model Router**: 1.5B classifies → routes to **14B main** (coding/system), **27B Opus** (EBS-heavy), or **1.5B** (greetings/fast summaries)
 - **Agentic Tool Loop**: LLM calls tools, gets results, reasons, calls more tools — like a real agent
-- **17 Built-in Tools**: bash + blender, file read/write/edit/glob, git, Oracle DB, EBS guides/status, web search/fetch
+- **Core + MCP Tooling**: Built-in tools (bash, blender, file ops, git, Oracle/EBS, web) plus auto-registered MCP tools (e.g., `mcp_blender_*`) when configured
 - **Parallel Multi-Worker Terminals**: Unlimited concurrent bash workers with tabbed UI (W1, W2, …), each with its own persistent shell session — like tmux split panes in a browser (still subject to server RAM/ulimit)
 - **Tool Approval System**: Every tool call requires user approval before execution (Allow/Deny)
 - **Stop/Cancel**: Abort any ongoing AI response or worker mid-stream
@@ -334,7 +334,7 @@ mcp_servers:
     url: http://localhost:3100/sse
 ```
 
-MCP tools are auto-discovered and registered on startup.
+MCP tools are auto-discovered and registered on startup, and are now available in coding/system/EBS flows when connected.
 
 ## Recommended Models
 
@@ -346,7 +346,14 @@ MCP tools are auto-discovered and registered on startup.
 
 ## Changelog
 
-### v0.8 — Uploads + Blender Tooling (Latest)
+### v0.9 — Blender MCP Live Integration (Latest)
+- **Blender MCP server wiring**: Added default `mcp_servers.blender` config support for local `blender-mcp`
+- **Dynamic MCP tool availability**: Agent now includes discovered `mcp_*` tools in active tool set for coding/system/EBS categories
+- **Robust stdio MCP parsing**: Client skips non-JSON startup noise and reads JSON-RPC responses reliably
+- **Interactive-first Blender guidance**: Prompt and routing updated to prefer `mcp_blender_*` for scene edits/snapshots, while keeping local `blender` for deterministic headless exports
+- **New skill**: Added `blender_mcp_live_mode.md` for viewport-first iterative 3D workflows
+
+### v0.8 — Uploads + Blender Tooling
 - **Composer uploads**: Added image/file upload buttons in web composer with workspace `uploads/` persistence
 - **Attachment-aware execution**: WebSocket message payload now carries validated attachment paths (server-side restricted to `uploads/`)
 - **Per-request skill trigger injection**: Skill markdown is activated dynamically from request keywords before each run
