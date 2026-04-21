@@ -2,7 +2,7 @@
 name: design_studio_workflows
 description: Designer uploads, ImageMagick/Blender patterns, and multi-variant exports in CodeAgent workspace
 tags: [design, imagemagick, blender, studio, graphics]
-triggers: [design, designer, mockup, banner, logo, pattern, variation, upload, uploads, attachment, imagemagick, convert, blender, png, svg, thumbnail, layout]
+triggers: [design, designer, mockup, banner, logo, pattern, variation, upload, uploads, attachment, imagemagick, convert, blender, blend, png, svg, thumbnail, layout]
 ---
 
 # Design studio (CodeAgent + workspace)
@@ -23,7 +23,8 @@ triggers: [design, designer, mockup, banner, logo, pattern, variation, upload, u
 - Safe timestamps: **`TS="$(date '+%Y-%m-%d %H:%M:%S')"`** and quote in `-annotate`.
 
 ## Blender (batch)
-- Prefer **headless**: `blender -b <file.blend> -P <script.py> -o //out_#### -F PNG -x 1 -a` or scripted single frame — keep outputs under **`$WS/`**.
+- Prefer the **`blender` tool** (structured `blend_file`, optional `python_script`, `extra_args`) instead of shell-wrapping Blender in bash.
+- Example idea: `blend_file=/opt/.../scene.blend`, `python_script=/opt/.../render.py`, `extra_args=["-o", "//render_####", "-F", "PNG", "-f", "1"]` — keep outputs under **`$WS/`** (use `//` paths relative to the .blend directory when appropriate).
 
 ## Quality checklist
 - Resolution and aspect ratio match user request.

@@ -27,6 +27,10 @@ tools:
   bash:
     enabled: true
     timeout: 120
+  blender:
+    enabled: true
+    binary: /usr/bin/blender
+    timeout: 600
     blocked_commands:
       - "rm -rf /"
       - shutdown

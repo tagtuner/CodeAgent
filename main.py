@@ -19,6 +19,7 @@ from core.agent import Agent
 from core.session import Session
 from tools.base import ToolRegistry
 from tools.bash_tool import BashTool
+from tools.blender_tool import BlenderTool
 from tools.file_ops import ReadFileTool, WriteFileTool, EditFileTool, GlobSearchTool
 from tools.git_tool import GitStatusTool, GitDiffTool, GitCommitTool
 from tools.oracle import OracleQueryTool, OracleSchemaTool, SqlValidateTool, OracleExplainTool, set_oracle_connections
@@ -43,6 +44,13 @@ def build_registry(config: Config) -> ToolRegistry:
         blocked = tool_cfg.get("bash", {}).get("blocked_commands", [])
         timeout = tool_cfg.get("bash", {}).get("timeout", 120)
         registry.register(BashTool(blocked=blocked, default_timeout=timeout))
+
+    if tool_cfg.get("blender", {}).get("enabled", True):
+        bc = tool_cfg.get("blender", {})
+        registry.register(BlenderTool(
+            binary=bc.get("binary") or None,
+            default_timeout=int(bc.get("timeout", 600)),
+        ))
 
     if tool_cfg.get("file_ops", {}).get("enabled", True):
         registry.register(ReadFileTool())

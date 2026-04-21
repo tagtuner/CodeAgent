@@ -4,7 +4,7 @@ from .llm import LLMClient
 
 TOOL_MAP: dict[str, list[str]] = {
     "simple": ["web_search", "web_fetch"],
-    "coding": ["bash", "read_file", "write_file", "edit_file", "glob_search", "web_search", "web_fetch"],
+    "coding": ["bash", "blender", "read_file", "write_file", "edit_file", "glob_search", "web_search", "web_fetch"],
     "ebs": ["bash", "ebs_module_guide", "ebs_concurrent_status", "oracle_query", "oracle_schema", "sql_validate", "oracle_explain", "web_search"],
     "system": ["bash", "read_file", "write_file", "git_status", "git_diff", "git_commit", "web_search", "web_fetch"],
 }
@@ -37,6 +37,7 @@ KEYWORD_PATTERNS = {
         r"\b(write\s+a?\s*(script|function|class|program|code|file)|"
         r"debug|refactor|implement|create\s+a?\s*(file|script)|python|bash|"
         r"javascript|typescript|html|css|api|endpoint|parse|regex|"
+        r"blender|\.blend|"
         r"image|logo|design|mockup|png|jpg|jpeg|gif|webp|svg|draw|"
         r"upload|uploaded|attachment|variation|pattern|variants?|"
         r"generate\s+(an?\s+)?image|create\s+(an?\s+)?image|resize|thumbnail)\b",
