@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CodeAgent — Admin</title>
+  <style>
+    :root {
+      --bg: #0d1117; --surface: #161b22; --border: #30363d;
+      --text: #e6edf3; --text2: #8b949e; --accent: #58a6ff; --green: #3fb950; --red: #f85149;
+      --font: 'Segoe UI', system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { font-family: var(--font); background: var(--bg); color: var(--text); margin: 0; padding: 16px 20px 40px; max-width: 1100px; margin-left: auto; margin-right: auto; }
+    h1 { font-size: 20px; color: var(--accent); margin: 0 0 8px; }
+    p.hint { color: var(--text2); font-size: 13px; margin: 0 0 20px; line-height: 1.5; }
+    h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .4px; color: var(--text2); margin: 24px 0 10px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border: 1px solid var(--border); padding: 8px; vertical-align: top; }
+    th { background: var(--surface); text-align: left; color: var(--text2); font-weight: 600; }
+    input, textarea { width: 100%; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 6px 8px; font-family: inherit; font-size: 13px; }
+    textarea { min-height: 52px; resize: vertical; }
+    .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+    .btn { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; text-decoration: none; display: inline-block; }
+    .btn:hover { border-color: var(--accent); }
+    .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn-primary:hover { filter: brightness(1.05); }
+    #status { margin-top: 16px; padding: 10px; border-radius: 6px; font-size: 14px; display: none; }
+    #status.ok { display: block; background: #0d2818; border: 1px solid var(--green); color: var(--green); }
+    #status.err { display: block; background: #3d1418; border: 1px solid var(--red); color: var(--red); }
+    .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <div>
+      <h1>CodeAgent Admin</h1>
+      <p class="hint">Groups define which <strong>tools</strong> and <strong>models</strong> (same strings as in <code>config.yaml</code>) members get. Users inherit the <strong>union</strong> of their groups. Use <code>*</code> for all tools or all models. At least one user must stay in the <code>admin</code> group.</p>
+    </div>
+    <div class="row">
+      <a class="btn" href="/">← Chat</a>
+      <button type="button" class="btn" id="btnReload">Reload</button>
+      <button type="button" class="btn btn-primary" id="btnSave">Save</button>
+    </div>
+  </div>
+
+  <h2>Groups</h2>
+  <table id="groupsTable">
+    <thead><tr><th style="width:140px">Group id</th><th>Tools (comma-separated)</th><th>Models (comma-separated)</th><th style="width:70px"></th></tr></thead>
+    <tbody id="groupsBody"></tbody>
+  </table>
+  <button type="button" class="btn" id="btnAddGroup" style="margin-top:10px">+ Add group</button>
+
+  <h2>Users</h2>
+  <table id="usersTable">
+    <thead>
+      <tr>
+        <th>Username</th>
+        <th>Groups (comma)</th>
+        <th>Password <span style="font-weight:400;color:var(--text2)">(blank = keep)</span></th>
+        <th style="width:70px"></th>
+      </tr>
+    </thead>
+    <tbody id="usersBody"></tbody>
+  </table>
+  <button type="button" class="btn" id="btnAddUser" style="margin-top:10px">+ Add user</button>
+
+  <div id="status"></div>
+
+  <script>
+    function splitCS(s) {
+      return String(s || '').split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+    }
+    function joinCS(a) { return (a || []).join(', '); }
+
+    function esc(s) {
+      var d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    var state = { groups: {}, users: [] };
+
+    function renderGroups() {
+      var tb = document.getElementById('groupsBody');
+      tb.innerHTML = '';
+      Object.keys(state.groups).sort().forEach(function (name) {
+        var g = state.groups[name];
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td><input type="text" data-k="gname" value="' + esc(name) + '"' + (String(name).toLowerCase() === 'admin' ? ' readonly' : '') + '></td>' +
+          '<td><textarea data-k="gtools">' + esc(joinCS(g.tools)) + '</textarea></td>' +
+          '<td><textarea data-k="gmodels">' + esc(joinCS(g.models)) + '</textarea></td>' +
+          '<td><button type="button" class="btn" data-act="rmg">Remove</button></td>';
+        tr.querySelector('[data-act="rmg"]').onclick = function () { tr.remove(); };
+        tb.appendChild(tr);
+      });
+    }
+
+    function renderUsers() {
+      var tb = document.getElementById('usersBody');
+      tb.innerHTML = '';
+      state.users.forEach(function (u, idx) {
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td><input type="text" data-k="uname" value="' + esc(u.username || '') + '"></td>' +
+          '<td><input type="text" data-k="ugroups" value="' + esc(joinCS(u.groups)) + '"></td>' +
+          '<td><input type="password" data-k="upass" placeholder="••••••••" autocomplete="new-password"></td>' +
+          '<td><button type="button" class="btn" data-act="rmu">Remove</button></td>';
+        tr.querySelector('[data-act="rmu"]').onclick = function () { tr.remove(); };
+        tb.appendChild(tr);
+      });
+    }
+
+    function collect() {
+      var groups = {};
+      document.querySelectorAll('#groupsBody tr').forEach(function (tr) {
+        var nm = (tr.querySelector('[data-k="gname"]') || {}).value || '';
+        nm = nm.trim();
+        if (!nm) return;
+        groups[nm] = {
+          tools: splitCS((tr.querySelector('[data-k="gtools"]') || {}).value),
+          models: splitCS((tr.querySelector('[data-k="gmodels"]') || {}).value),
+        };
+      });
+      var users = [];
+      document.querySelectorAll('#usersBody tr').forEach(function (tr) {
+        var uname = ((tr.querySelector('[data-k="uname"]') || {}).value || '').trim();
+        if (!uname) return;
+        users.push({
+          username: uname,
+          groups: splitCS((tr.querySelector('[data-k="ugroups"]') || {}).value),
+          password: ((tr.querySelector('[data-k="upass"]') || {}).value || ''),
+          tools: [],
+          models: [],
+        });
+      });
+      return { groups: groups, users: users };
+    }
+
+    function showStatus(ok, msg) {
+      var el = document.getElementById('status');
+      el.className = ok ? 'ok' : 'err';
+      el.textContent = msg;
+      el.style.display = 'block';
+    }
+
+    async function loadAll() {
+      try {
+        var opt = await fetch('/api/admin/options').then(function (r) { return r.json(); });
+        var cfg = await fetch('/api/admin/config').then(function (r) { return r.json(); });
+        state.groups = cfg.groups || {};
+        state.users = cfg.users || [];
+        renderGroups();
+        renderUsers();
+        document.getElementById('status').style.display = 'none';
+        window.__adminOptions = opt;
+      } catch (e) {
+        showStatus(false, 'Load failed: ' + (e && e.message));
+      }
+    }
+
+    document.getElementById('btnAddGroup').onclick = function () {
+      var name = prompt('New group id (letters/numbers):');
+      if (!name || !name.trim()) return;
+      name = name.trim();
+      if (state.groups[name]) {
+        alert('Group exists'); return;
+      }
+      state.groups[name] = { tools: [], models: [] };
+      renderGroups();
+    };
+
+    document.getElementById('btnAddUser').onclick = function () {
+      state.users.push({ username: '', groups: [], password: '', tools: [], models: [] });
+      renderUsers();
+    };
+
+    document.getElementById('btnReload').onclick = loadAll;
+
+    document.getElementById('btnSave').onclick = async function () {
+      var body = collect();
+      try {
+        var r = await fetch('/api/admin/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        var j = await r.json().catch(function () { return {}; });
+        if (!r.ok) {
+          showStatus(false, j.detail || r.statusText || 'Save failed');
+          return;
+        }
+        showStatus(true, 'Saved. Changes apply on next request (users.yaml updated).');
+        await loadAll();
+      } catch (e) {
+        showStatus(false, 'Save failed: ' + (e && e.message));
+      }
+    };
+
+    loadAll();
+  </script>
+</body>
+</html>

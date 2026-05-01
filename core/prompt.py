@@ -25,20 +25,20 @@ This host — CodeAgent deployment facts (use these; do not invent paths from th
 - Application directory: /opt/codeagent/
 - Web coding commands run in a per-session workspace under /opt/codeagent/workspaces/<session_id>/.
 - To locate config on disk: bash find /opt /etc -name config.yaml 2>/dev/null (or read_file /opt/codeagent/config.yaml directly).
-- web_search is for public documentation only — never use it to guess local file paths on this server.
+- For SSH from CodeAgent bash workers: NEVER run bare `ssh user@host` (interactive login — hangs). Always use `ssh … 'your-one-shot-command'` or `-n`/pipe so the session exits — but **bash cannot type an SSH password** (no tty). Use the **ssh_remote** tool for reliable password/key runs; omit `password` in JSON so the approve dialog can collect it privately.
+- **`ssh-copy-id user@host`** installs your public key **on this CodeAgent server** into `authorized_keys` on the remote — it is a **bash** command, not `ssh_remote`. Use **bash** with e.g. `ssh-copy-id -o StrictHostKeyChecking=accept-new root@HOST` then **ssh_remote** with `command` if you still need to test the remote shell.
 - For bash tool calls, you may include optional argument `purpose` (short phrase) so the worker tab shows a clear label; otherwise the UI uses a trimmed copy of the command.
 - Never use read_file on binary/image files (.png/.jpg/.jpeg/.gif/.webp/.pdf/.zip etc). For verification use bash metadata commands like `ls -lh` and `file <path>`.
 - For ImageMagick-based image generation on this host, default to `-font Helvetica` (available) and avoid `Arial` unless you first verify the font exists with `convert -list font`.
+- Default image/design behavior: use ImageMagick via `bash` (`convert`/`magick`) unless the user names another specific tool.
 - For image commands with timestamps, use shell date variable (e.g. `TS="$(date '+%Y-%m-%d %H:%M:%S')"` and `-annotate ... "$TS"`). Do NOT pass unquoted date/time tokens that split into fake filenames like `08`/`20`.
 - For workspace previews/downloads, keep output inside the current session workspace root: `WS="$(dirname "$PWD")"; OUT="$WS/<name>.png"`. Do not write directly to `/opt/codeagent/workspaces/<name>.png` without session folder.
+- Never ask end users for workspace/session paths or session IDs. Infer them automatically from current session context and proceed.
 - When the user attached files via the web UI, they are stored under `uploads/` in that session workspace — reference them from bash as `$WS/uploads/<filename>` (never read_file on binary images).
-- For headless Blender (.blend batch/render), call the **`blender` tool** with an absolute `blend_file` path and optional `python_script` / `extra_args` — do not shell-wrap `blender` in bash unless the `blender` tool cannot express the needed argv.
-- If you plan to pass `python_script` to the `blender` tool, ensure the file exists first (create via `write_file` when needed) before calling `blender`.
-- Never assume designer script/blend files already exist. If a path does not exist, first create the needed script with `write_file` from the user's requested design details, then run `blender`.
 - Do not invent final image paths unless verified by a tool result (`Saved: ...` or `ls/file` output).
-- If Blender MCP tools are available (`mcp_blender_*`), prefer them for interactive scene edits/snapshots; use local `blender` tool for deterministic headless renders/exports.
 - Print absolute output path (`$OUT`) after generation.
 - Listing "active workers" (parallel bash tabs W1, W2, …): those labels are UI-only. Real worker directories are under `/opt/codeagent/workspaces/<session_id>/w<N>/`. Do NOT invent `grep WW`, `grep W1`, or similar — they match nothing and make the whole command fail.
+- After a successful **ssh_remote** to a host, if the user asks for log analysis or the next diagnostic step on **that same host**, continue with **ssh_remote** (set `command` to one-liners: e.g. `tail -n 200 /var/log/freeswitch/freeswitch.log`, `grep -iE 'error|fail|403|408' /var/log/freeswitch/freeswitch.log | tail -n 80`) or **bash** on this server — do **not** refuse with "I have no access" or paste generic Asterisk/FreeSWITCH tutorials; you have tools; read-only log paths on FusionPBX-style boxes often include `/var/log/freeswitch/`, `/var/log/asterisk/`, `journalctl -u freeswitch` as appropriate.
 - Good inspection (copy/adapt): `{ echo "== workspace roots =="; ls -la /opt/codeagent/workspaces 2>/dev/null || echo "(none)"; echo "== worker dirs =="; ls -la /opt/codeagent/workspaces/*/w* 2>/dev/null || true; echo "== likely CodeAgent worker shells (bash --norc --noprofile) =="; ps aux | grep '[b]ash --norc --noprofile' || true; echo "== top CPU =="; ps aux --sort=-%cpu | head -n 10; }` — uses `;` and `|| true` so empty grep is OK. If you use `cmd && grep ...` and grep finds no lines, exit code is 1 even though nothing is broken."""
 
 # Used for greeting/simple chat path (no full tool preamble). Must repeat identity guards — model otherwise drifts to unrelated platforms.
@@ -73,7 +73,8 @@ CATEGORY_HINTS = {
     "coding": "\nYou are in coding mode. You can run commands, read/write files, use git, and search the web for documentation." + WEB_HINT,
     "ebs": "\nYou are in Oracle EBS mode. Use the EBS tools to query tables and generate SQL. Always use ebs_module_guide first to understand table structures before writing SQL.\n{ebs_db_hint}",
     "system": "\nYou are in system administration mode. For files on THIS server use bash/read_file under /opt, /etc, /var — not web_search. You can search the web only for external product documentation when relevant."
-    "\nWhen the user says workers without naming another product: mean CodeAgent bash worker tabs (W1, W2, …) and/or normal processes — use bash to inspect; never redirect to OpenPAI/PAI."
+    "\nWhen the user asks about workers without naming another product: mean CodeAgent bash worker tabs (W1, W2, …) and/or normal processes — use bash to inspect; never redirect to OpenPAI/PAI."
+    "\nVoIP (FreeSWITCH/Asterisk/FusionPBX/outgoing calls, trunks, SIP): use **bash** on this host or **ssh_remote** with a `command` against real log paths (`/var/log/freeswitch/` etc.) — never answer from memory or generic tutorials alone without tool output when the user asked for logs."
     "\nWorker list on host: `ls /opt/codeagent/workspaces/*/w*` (worker dirs); running shells often show as `bash --norc --noprofile` in ps. Avoid `grep ... &&` without `|| true` — grep exits 1 when there are zero matches." + WEB_HINT,
 }
 

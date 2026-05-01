@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CodeAgent — Login</title>
+  <style>
+    :root {
+      --bg: #0d1117; --surface: #161b22; --border: #30363d;
+      --text: #e6edf3; --text2: #8b949e; --accent: #58a6ff; --red: #f85149;
+      --font: system-ui, sans-serif;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .box { width: 100%; max-width: 400px; padding: 24px; }
+    h1 { font-size: 22px; color: var(--accent); margin-bottom: 20px; text-align: center; }
+    input { width: 100%; padding: 12px; margin-bottom: 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 16px; }
+    input::placeholder { color: var(--text2); }
+    button { width: 100%; padding: 12px; border: none; border-radius: 6px; background: var(--accent); color: #fff; font-size: 16px; font-weight: 600; cursor: pointer; }
+    button:hover { filter: brightness(1.05); }
+    #msg { margin-top: 14px; font-size: 14px; color: var(--red); min-height: 1.2em; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>CodeAgent Login</h1>
+    <form id="f">
+      <input id="username" type="text" placeholder="Username" autocomplete="username" required>
+      <input id="password" type="password" placeholder="Password" autocomplete="current-password" required>
+      <button type="submit">Login</button>
+      <div id="msg"></div>
+    </form>
+  </div>
+  <script>
+    document.getElementById('f').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var u = document.getElementById('username').value;
+      var p = document.getElementById('password').value;
+      var m = document.getElementById('msg');
+      m.textContent = '';
+      try {
+        var r = await fetch('/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ username: u, password: p })
+        });
+        if (r.ok) {
+          window.location.href = '/';
+          return;
+        }
+        try {
+          var j = await r.json();
+          m.textContent = j.detail || 'Login failed';
+        } catch (_) {
+          m.textContent = 'Login failed';
+        }
+      } catch (_) {
+        m.textContent = 'Network error';
+      }
+    });
+  </script>
+</body>
+</html>

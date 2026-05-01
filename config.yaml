@@ -1,19 +1,24 @@
+# All slots use OpenRouter's free pool — no fixed vendor/model name; OpenRouter picks a free model per request.
+# Docs: https://openrouter.ai/docs/guides/routing/routers/free-models-router
 models:
   main:
-    url: http://127.0.0.1:8080/v1
-    name: qwen2.5-coder-14b
+    url: https://openrouter.ai/api/v1
+    name: openrouter/free
     ctx_size: 16384
     max_output: 4096
+    api_key: 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
   fast:
-    url: http://127.0.0.1:8090/v1
-    name: qwen2.5-1.5b
+    url: https://openrouter.ai/api/v1
+    name: openrouter/free
     ctx_size: 8192
-    max_output: 512
+    max_output: 2048
+    api_key: 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
   opus:
-    url: http://127.0.0.1:8085/v1
-    name: qwen3.5-27b-opus
+    url: https://openrouter.ai/api/v1
+    name: openrouter/free
     ctx_size: 16384
     max_output: 4096
+    api_key: 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
 
 router:
   model: fast
@@ -27,16 +32,9 @@ tools:
   bash:
     enabled: true
     timeout: 120
-  blender:
+  ssh_remote:
     enabled: true
-    binary: /usr/bin/blender
-    timeout: 600
-    blocked_commands:
-      - "rm -rf /"
-      - shutdown
-      - reboot
-      - "mkfs"
-      - "dd if="
+    timeout: 120
   file_ops:
     enabled: true
     allowed_dirs:
@@ -73,12 +71,6 @@ tools:
   ebs:
     enabled: true
 
-mcp_servers:
-  - name: blender
-    command: /root/.local/bin/blender-mcp
-    env:
-      DISABLE_TELEMETRY: "true"
-
 skills_dir: /opt/codeagent/skills/library
 
 web:
@@ -94,7 +86,7 @@ permissions:
 
 session:
   dir: /opt/codeagent/sessions
-  # Lower = faster prefill per turn (less chat history sent to 14B/Opus). Raise if long threads lose context.
+  # Lower = faster prefill per turn. Raise if long threads lose context.
   max_history_tokens: 2048
 
 agent:

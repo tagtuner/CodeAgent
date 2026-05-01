@@ -28,13 +28,15 @@ class Session:
         return self._trimmed()
 
     def _estimate_tokens(self, text: str) -> int:
+        if text is None:
+            return 0
         return len(text) // 3 + 1
 
     def _trimmed(self) -> list[dict]:
         total = 0
         result = []
         for msg in reversed(self.messages):
-            tokens = self._estimate_tokens(msg.get("content", ""))
+            tokens = self._estimate_tokens(msg.get("content") or "")
             if total + tokens > self.max_history_tokens and result:
                 break
             result.append(msg)
@@ -76,7 +78,7 @@ class Session:
                 first_msg = ""
                 for m in data.get("messages", []):
                     if m["role"] == "user":
-                        first_msg = m["content"][:80]
+                        first_msg = ((m.get("content") or "")[:80])
                         break
                 sessions.append({
                     "id": data["id"],

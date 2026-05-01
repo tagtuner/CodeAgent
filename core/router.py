@@ -4,9 +4,28 @@ from .llm import LLMClient
 
 TOOL_MAP: dict[str, list[str]] = {
     "simple": ["web_search", "web_fetch"],
-    "coding": ["bash", "blender", "read_file", "write_file", "edit_file", "glob_search", "web_search", "web_fetch"],
+    "coding": [
+        "bash",
+        "ssh_remote",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "glob_search",
+        "web_search",
+        "web_fetch",
+    ],
     "ebs": ["bash", "ebs_module_guide", "ebs_concurrent_status", "oracle_query", "oracle_schema", "sql_validate", "oracle_explain", "web_search"],
-    "system": ["bash", "read_file", "write_file", "git_status", "git_diff", "git_commit", "web_search", "web_fetch"],
+    "system": [
+        "bash",
+        "ssh_remote",
+        "read_file",
+        "write_file",
+        "git_status",
+        "git_diff",
+        "git_commit",
+        "web_search",
+        "web_fetch",
+    ],
 }
 
 CLASSIFY_PROMPT = """\
@@ -14,9 +33,9 @@ Classify the user message into exactly one category. Reply with ONLY the categor
 
 Categories:
 - simple: greetings, general questions, explanations, web searches, looking up information
-- coding: writing code, scripts, files, debugging, programming tasks; design/image work including uploaded attachments (patterns, variants, ImageMagick/Blender)
+- coding: writing code, scripts, files, debugging, programming tasks; design/image work including uploaded attachments (patterns, variants, ImageMagick)
 - ebs: Oracle EBS, SQL queries, database tables, PO/AP/AR/GL/INV modules, suppliers, invoices
-- system: server administration, git, services, disk, network, system commands; also workers/processes on THIS server (often CodeAgent bash worker tabs W1, W2, …, not OpenPAI/Kubernetes unless user names them)
+- system: server administration, git, services, disk, network, system commands; VoIP/SIP (Asterisk/FreeSWITCH/FusionPBX), trunk/outgoing call **log** analysis; also workers/processes on THIS server (often CodeAgent bash worker tabs W1, W2, …, not OpenPAI/Kubernetes unless user names them)
 
 User message: {message}
 
@@ -30,7 +49,8 @@ KEYWORD_PATTERNS = {
     ),
     "system": re.compile(
         r"\b(systemctl|journalctl|nginx|firewall|disk|mount|nfs|ssh|service|"
-        r"git\s|git\b|commit|push|pull|reboot|cron|rsync|backup|workers?|active\s+worker)\b",
+        r"git\s|git\b|commit|push|pull|reboot|cron|rsync|backup|workers?|active\s+worker|"
+        r"freeswitch|asterisk|fusionpbx|kamailio|pjsip|voip\b|sip[\s_-]?trunk|outgoing|inbound|cdr)\b",
         re.IGNORECASE,
     ),
     "coding": re.compile(
@@ -64,7 +84,11 @@ class Router:
                 max_tokens=10,
                 temperature=0.1,
             )
-            cat = resp["content"].strip().lower().split()[0] if resp["content"] else "coding"
+            c_text = resp.get("content") or ""
+            c_text = c_text.strip() if isinstance(c_text, str) else ""
+            if not c_text:
+                return "coding"
+            cat = c_text.lower().split()[0]
             cat = cat.strip(".,!:;\"'")
             if cat in TOOL_MAP:
                 return cat
@@ -76,7 +100,7 @@ class Router:
         msg_lower = message.lower().strip()
 
         # Explicit tool invocation style should never route to simple.
-        if "mcp_blender_" in msg_lower or "tool_call" in msg_lower or "blender tool" in msg_lower:
+        if "tool_call" in msg_lower:
             return "coding"
 
         # Force image/design generation requests into coding so tools are available.
@@ -93,10 +117,19 @@ class Router:
         if any(w in msg_lower for w in ("upload", "uploaded", "attachment")) and any(
             w in msg_lower for w in (
                 "design", "pattern", "variant", "image", "logo", "mockup", "banner",
-                "convert", "resize", "imagemagick", "blender",
+                "convert", "resize", "imagemagick",
             )
         ):
             return "coding"
+
+        # VoIP/SIP/trunk log diagnosis must keep bash / ssh_remote (not "simple").
+        voip_hints = (
+            "outgoing call", "outbound", "sip", "voip", "asterisk", "freeswitch", "fusionpbx",
+            "kamailio", "pjsip", "sip trunk", "trunk registration", "cdr",
+        )
+        diag_hints = ("log", "analyze", "analyse", "check", "tail", "grep", "issue", "error", "fail")
+        if any(h in msg_lower for h in voip_hints) and any(h in msg_lower for h in diag_hints):
+            return "system"
 
         simple_patterns = (
             "email", "letter", "draft", "translate", "summarize", "summary",
@@ -109,7 +142,8 @@ class Router:
             if not any(w in msg_lower for w in (
                 "sql", "oracle", "ebs", "select ", "table", "server",
                 "systemctl", "nginx", "bash", "script", "function", "file",
-                "blender", "mcp_", "tool", "viewport", ".blend",
+                "mcp_", "tool",
+                "sip", "voip", "asterisk", "freeswitch", "trunk", "outgoing", "log",
             )):
                 return "simple"
 

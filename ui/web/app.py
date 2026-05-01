@@ -7,10 +7,11 @@ import os
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect, HTTPException, Request, Response, Form, Depends, Body
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from core import access as user_access
 from core.config import Config
 from core.llm import LLMClient
 from core.agent import Agent, AgentEvent
@@ -29,6 +30,63 @@ _llm_fast: LLMClient | None = None
 _llm_opus: LLMClient | None = None
 _skills_context: str = ""
 _sessions: dict[str, Session] = {}
+
+
+def create_session_cookie(response: Response, username: str) -> None:
+    response.set_cookie(
+        key="session",
+        value=username,
+        httponly=True,
+        max_age=3600,
+        path="/",
+    )
+
+
+def get_current_user(cookies: dict) -> dict | None:
+    username = cookies.get("session")
+    if not username:
+        return None
+    return user_access.get_user_by_username(str(username))
+
+
+def require_user_dep(request: Request) -> dict:
+    if not user_access.auth_enabled():
+        return {"username": "__anon__", "groups": [], "password_hash": ""}
+    user = get_current_user(dict(request.cookies))
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user
+
+
+def require_admin_dep(request: Request) -> dict:
+    if not user_access.auth_enabled():
+        raise HTTPException(status_code=403, detail="Admin UI requires users.yaml authentication")
+    user = get_current_user(dict(request.cookies))
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if not user_access.is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin only")
+    return user
+
+
+def filtered_tools_for_user(user: dict, reg: ToolRegistry) -> list[str]:
+    all_names = reg.list_tools()
+    if not user_access.auth_enabled() or user.get("username") == "__anon__":
+        return all_names
+    ta, _ma = user_access.effective_agent_frozensets(user, all_names)
+    if ta is None:
+        return all_names
+    return sorted(ta)
+
+
+def _unique_preserve(seq: list[str]) -> list[str]:
+    s: set[str] = set()
+    out: list[str] = []
+    for x in seq:
+        if x not in s:
+            s.add(x)
+            out.append(x)
+    return out
 
 # Workspace uploads (composer → session uploads/)
 _UPLOAD_MAX_BYTES = 30 * 1024 * 1024
@@ -274,16 +332,92 @@ def create_app(
             await _llm_opus.close()
 
     @app.get("/", response_class=HTMLResponse)
-    async def index():
+    async def index(request: Request):
+        if user_access.auth_enabled() and not get_current_user(dict(request.cookies)):
+            return RedirectResponse(url="/login.html", status_code=302)
         html_path = STATIC_DIR / "index.html"
         return HTMLResponse(html_path.read_text())
+
+    @app.get("/admin.html", response_class=HTMLResponse)
+    async def admin_page(request: Request):
+        if user_access.auth_enabled():
+            u = get_current_user(dict(request.cookies))
+            if not u or not user_access.is_admin(u):
+                return RedirectResponse(url="/login.html", status_code=302)
+        admin_path = STATIC_DIR / "admin.html"
+        if not admin_path.is_file():
+            raise HTTPException(status_code=404, detail="admin.html missing")
+        return HTMLResponse(admin_path.read_text())
+
+    @app.get("/login.html", response_class=HTMLResponse)
+    async def login_page():
+        login_path = STATIC_DIR / "login.html"
+        return HTMLResponse(login_path.read_text())
+
+    @app.post("/login")
+    async def login(request: Request, username: str = Form(None), password: str = Form(None)):
+        form_data = await request.form()
+        if username is None:
+            username = form_data.get("username")
+        if password is None:
+            password = form_data.get("password")
+        if form_data:
+            log.info("Login attempt username=%s", username)
+        if not username or not password:
+            raise HTTPException(status_code=400, detail="Username and password required")
+        u = user_access.authenticate_user(str(username), str(password))
+        if not u:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        redirect = RedirectResponse(url="/", status_code=302)
+        create_session_cookie(redirect, str(username))
+        return redirect
 
     @app.get("/api/health")
     async def health():
         return {"status": "ok", "model": config.main_model.name}
 
+    @app.get("/api/me")
+    async def api_me(user: dict = Depends(require_user_dep)):
+        if not user_access.auth_enabled():
+            return {"auth_enabled": False, "username": None, "is_admin": False}
+        if user.get("username") == "__anon__":
+            return {"auth_enabled": False, "username": None, "is_admin": False}
+        doc = user_access.load_document()
+        gm = user_access.normalize_groups(doc)
+        tw, tls, mw, mls = user_access.effective_permissions(user, gm)
+        return {
+            "auth_enabled": True,
+            "username": user.get("username"),
+            "groups": list(user.get("groups") or []),
+            "is_admin": user_access.is_admin(user),
+            "tools_wildcard": tw,
+            "tools": tls,
+            "models_wildcard": mw,
+            "models": mls,
+        }
+
+    @app.get("/api/admin/options")
+    async def admin_options(_admin: dict = Depends(require_admin_dep)):
+        tools = _registry.list_tools()
+        models = user_access.config_model_names(config)
+        return {"tools": tools, "models": _unique_preserve(models)}
+
+    @app.get("/api/admin/config")
+    async def admin_get_config(_admin: dict = Depends(require_admin_dep)):
+        return user_access.admin_config_public(user_access.load_document())
+
+    @app.put("/api/admin/config")
+    async def admin_put_config(_admin: dict = Depends(require_admin_dep), body: dict = Body(...)):
+        try:
+            old = user_access.load_document()
+            merged = user_access.merge_admin_put(body, old)
+            user_access.write_document(merged)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {"ok": True}
+
     @app.get("/api/system/metrics")
-    async def system_metrics():
+    async def system_metrics(_user: dict = Depends(require_user_dep)):
         cpu_pct = _linux_cpu_percent()
         mem = _linux_memory_usage()
         load1 = load5 = load15 = None
@@ -303,16 +437,16 @@ def create_app(
         }
 
     @app.get("/api/tools")
-    async def list_tools():
-        return {"tools": _registry.list_tools()}
+    async def list_tools(user: dict = Depends(require_user_dep)):
+        return {"tools": filtered_tools_for_user(user, _registry)}
 
     @app.get("/api/sessions")
-    async def list_sessions():
+    async def list_sessions(_user: dict = Depends(require_user_dep)):
         session_dir = config.session.get("dir", "/opt/codeagent/sessions")
         return {"sessions": Session.list_sessions(session_dir)}
 
     @app.post("/api/session/new")
-    async def new_session():
+    async def new_session(_user: dict = Depends(require_user_dep)):
         max_tok = config.session.get("max_history_tokens", 12000)
         s = Session(max_history_tokens=max_tok)
         _sessions[s.id] = s
@@ -320,7 +454,7 @@ def create_app(
         return {"session_id": s.id, "workspace": str(ws)}
 
     @app.get("/api/session/{session_id}")
-    async def get_session(session_id: str):
+    async def get_session(session_id: str, _user: dict = Depends(require_user_dep)):
         session_dir = config.session.get("dir", "/opt/codeagent/sessions")
         session_file = Path(session_dir) / f"{session_id}.json"
         if not session_file.exists():
@@ -329,7 +463,7 @@ def create_app(
         return {"id": data["id"], "messages": data.get("messages", [])}
 
     @app.delete("/api/session/{session_id}")
-    async def delete_session(session_id: str):
+    async def delete_session(session_id: str, _user: dict = Depends(require_user_dep)):
         session_dir = config.session.get("dir", "/opt/codeagent/sessions")
         session_file = Path(session_dir) / f"{session_id}.json"
         if session_file.exists():
@@ -341,7 +475,7 @@ def create_app(
         return {"status": "deleted", "id": session_id}
 
     @app.get("/api/workspace/{session_id}")
-    async def workspace_info(session_id: str):
+    async def workspace_info(session_id: str, _user: dict = Depends(require_user_dep)):
         ws = _ensure_workspace(config, session_id)
         files = []
         for p in sorted(ws.rglob("*")):
@@ -356,7 +490,7 @@ def create_app(
         return {"session_id": session_id, "workspace": str(ws), "files": files}
 
     @app.get("/api/workspace/{session_id}/download")
-    async def workspace_download(session_id: str):
+    async def workspace_download(session_id: str, _user: dict = Depends(require_user_dep)):
         ws = _workspace_for_session(config, session_id)
         if not ws.exists():
             return JSONResponse({"error": "Workspace not found"}, status_code=404)
@@ -371,7 +505,7 @@ def create_app(
         )
 
     @app.get("/api/workspace/{session_id}/latest-image")
-    async def workspace_latest_image(session_id: str):
+    async def workspace_latest_image(session_id: str, _user: dict = Depends(require_user_dep)):
         ws = _workspace_for_session(config, session_id)
         if not ws.exists():
             return {"session_id": session_id, "path": None}
@@ -396,7 +530,7 @@ def create_app(
         return {"session_id": session_id, "path": rel}
 
     @app.get("/api/workspace/{session_id}/images")
-    async def workspace_images(session_id: str):
+    async def workspace_images(session_id: str, _user: dict = Depends(require_user_dep)):
         ws = _workspace_for_session(config, session_id)
         if not ws.exists():
             return {"session_id": session_id, "images": []}
@@ -414,14 +548,14 @@ def create_app(
         return {"session_id": session_id, "images": [rel for _, rel in items[:400]]}
 
     @app.get("/api/workspace/{session_id}/file")
-    async def workspace_file(session_id: str, path: str):
+    async def workspace_file(session_id: str, path: str, _user: dict = Depends(require_user_dep)):
         p = _resolve_workspace_file(config, session_id, path)
         if not p:
             return JSONResponse({"error": "File not found"}, status_code=404)
         return FileResponse(str(p))
 
     @app.delete("/api/workspace/{session_id}/file")
-    async def workspace_delete_file(session_id: str, path: str):
+    async def workspace_delete_file(session_id: str, path: str, _user: dict = Depends(require_user_dep)):
         p = _safe_workspace_file(config, session_id, path)
         if not p or not p.exists() or not p.is_file():
             return JSONResponse({"error": "File not found"}, status_code=404)
@@ -432,7 +566,7 @@ def create_app(
             return JSONResponse({"error": f"delete failed: {e}"}, status_code=500)
 
     @app.get("/api/workspace/{session_id}/download-file")
-    async def workspace_download_file(session_id: str, path: str):
+    async def workspace_download_file(session_id: str, path: str, _user: dict = Depends(require_user_dep)):
         p = _resolve_workspace_file(config, session_id, path)
         if not p:
             return JSONResponse({"error": "File not found"}, status_code=404)
@@ -442,6 +576,7 @@ def create_app(
     async def workspace_upload(
         session_id: str,
         files: Annotated[list[UploadFile], File(...)],
+        _user: dict = Depends(require_user_dep),
     ):
         """Save composer uploads under <workspace>/uploads/ (images + small design files)."""
         ws = _ensure_workspace(config, session_id)
@@ -489,8 +624,19 @@ def create_app(
 
     @app.websocket("/ws/{session_id}")
     async def ws_chat(websocket: WebSocket, session_id: str):
+        cookies = dict(websocket.cookies)
+        ws_user: dict | None = None
+        if user_access.auth_enabled():
+            ws_user = get_current_user(cookies)
+            if not ws_user:
+                await websocket.close(code=4001, reason="Unauthorized")
+                return
+        t_allow: frozenset[str] | None = None
+        m_allow: frozenset[str] | None = None
+        if ws_user:
+            t_allow, m_allow = user_access.effective_agent_frozensets(ws_user, _registry.list_tools())
         await websocket.accept()
-        log.info("ws accepted session=%s", session_id)
+        log.info("ws accepted session=%s user=%s", session_id, (ws_user or {}).get("username"))
         session = _sessions.get(session_id)
         if not session:
             max_tok = config.session.get("max_history_tokens", 12000)
@@ -512,6 +658,8 @@ def create_app(
             session=session,
             skills_context=_skills_context,
             worker_dir=str(ws_dir),
+            allowed_tool_names=t_allow,
+            allowed_model_names=m_allow,
         )
 
         input_queue: asyncio.Queue = asyncio.Queue()
@@ -537,11 +685,15 @@ def create_app(
                         log.info("ws recv session=%s type=%s", session_id, msg_type)
 
                     if msg_type == "tool_response":
-                        await agent.approval_queue.put(msg.get("approved", False))
+                        pl = msg.get("patch")
+                        await agent.approval_queue.put({
+                            "approved": bool(msg.get("approved")),
+                            "patch": pl if isinstance(pl, dict) else {},
+                        })
                     elif msg_type == "cancel":
                         agent._cancelled = True
                         try:
-                            agent.approval_queue.put_nowait(False)
+                            agent.approval_queue.put_nowait({"approved": False, "patch": {}})
                         except asyncio.QueueFull:
                             pass
                     elif msg_type == "worker_kill":
@@ -558,7 +710,7 @@ def create_app(
                             released = await agent.worker_pool.kill_all()
                             agent._cancelled = True
                             try:
-                                agent.approval_queue.put_nowait(False)
+                                agent.approval_queue.put_nowait({"approved": False, "patch": {}})
                             except asyncio.QueueFull:
                                 pass
                             for rid in released:
@@ -677,8 +829,15 @@ def create_app(
                             break
                 except Exception as e:
                     log.exception("agent.run failed session=%s err=%s", session_id, e)
+                    err_type = type(e).__name__
+                    msg = str(e).strip() or f"{err_type} during agent run"
+                    if "timeout" in err_type.lower():
+                        msg = (
+                            "Model request timed out. Please retry with a shorter prompt "
+                            "or re-run after model is responsive."
+                        )
                     try:
-                        await websocket.send_text(json.dumps({"type": "error", "content": str(e)}))
+                        await websocket.send_text(json.dumps({"type": "error", "content": msg}))
                     except Exception:
                         pass
                 finally:

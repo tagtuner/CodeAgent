@@ -1,0 +1,29 @@
+# Copy to config/users.yaml on the server (or set CODEAGENT_USERS_YAML).
+# Do NOT commit users.yaml — it holds password_hash values.
+#
+# Hash = SHA256(plaintext_password).hexdigest()  e.g. python3 -c "import hashlib; print(hashlib.sha256(b'YOUR_PW').hexdigest())"
+
+groups:
+  admin:
+    models: ["*"]
+    tools: ["*"]
+  readonly:
+    models: ["openrouter/free"]
+    tools:
+      - bash
+      - read_file
+      - write_file
+      - edit_file
+      - glob_search
+      - web_search
+      - web_fetch
+
+users:
+  - username: admin
+    password_hash: REPLACE_WITH_SHA256_HEX
+    groups:
+      - admin
+  - username: example_user
+    password_hash: REPLACE_WITH_SHA256_HEX
+    groups:
+      - readonly

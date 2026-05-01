@@ -5,6 +5,11 @@ import uuid
 from typing import AsyncIterator
 
 
+# Stall if foreground command prints no newline forever (often hanging interactive SSH).
+_READLINE_DEADLINE = float(os.environ.get("CODEAGENT_BASH_READLINE_DEADLINE_SEC", "420"))
+_MAX_JOB_SECONDS = float(os.environ.get("CODEAGENT_BASH_JOB_MAX_SEC", "10800"))
+
+
 class SubWorker:
     """Persistent shell subprocess for streaming command execution."""
 
@@ -43,12 +48,34 @@ class SubWorker:
         self.exit_code = None
 
         marker = f"__CA_END_{uuid.uuid4().hex[:12]}__"
-        wrapped = f'{command}\necho "{marker}$?"\n'
+        stripped = (command or "").strip()
+        # Single-line compound: `cmd; echo marker$?` so foreground ssh/sshpass cannot
+        # consume the next script line from stdin (ssh forwards stdin until exit).
+        if "\n" not in stripped:
+            wrapped = f'{stripped}; echo "{marker}$?"\n'
+        else:
+            wrapped = f'(\n{stripped}\n); echo "{marker}$?"\n'
         self.process.stdin.write(wrapped.encode())
         await self.process.stdin.drain()
 
+        loop = asyncio.get_running_loop()
+        start_wall = loop.time()
+
         while True:
-            raw = await self.process.stdout.readline()
+            if loop.time() - start_wall > _MAX_JOB_SECONDS:
+                self.state = "error"
+                self.exit_code = -124
+                yield "[CodeAgent] job exceeded max duration (CODEAGENT_BASH_JOB_MAX_SEC)"
+                break
+            try:
+                raw = await asyncio.wait_for(self.process.stdout.readline(), timeout=_READLINE_DEADLINE)
+            except asyncio.TimeoutError:
+                self.state = "error"
+                self.exit_code = -125
+                yield (
+                    f"[CodeAgent] no output line for {_READLINE_DEADLINE}s (hung foreground job / interactive)."
+                )
+                break
             if not raw:
                 self.state = "error"
                 self.exit_code = -1

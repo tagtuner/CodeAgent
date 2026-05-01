@@ -14,6 +14,7 @@ class Chunk:
     tool_name: str = ""
     tool_args: str = ""
     finish_reason: str | None = None
+    stats: dict | None = None
 
 
 class LLMClient:
@@ -22,7 +23,13 @@ class LLMClient:
         self.model = model_cfg.name
         self.max_output = model_cfg.max_output
         self.timeout = timeout
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10))
+        self.api_key = model_cfg.api_key
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+            headers["HTTP-Referer"] = "http://localhost:4200"
+            headers["X-Title"] = "CodeAgent"
+        self._client = httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10), headers=headers)
 
     async def close(self):
         await self._client.aclose()
@@ -48,10 +55,26 @@ class LLMClient:
         resp.raise_for_status()
         data = resp.json()
         choice = data["choices"][0]
+        usage = data.get("usage", {})
+        raw_content = choice.get("message", {}).get("content")
+        if raw_content is None:
+            content_str = ""
+        elif isinstance(raw_content, str):
+            content_str = raw_content
+        elif isinstance(raw_content, list):
+            # Multimodal / some providers return list of {type, text} blocks
+            parts: list[str] = []
+            for part in raw_content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    parts.append(part.get("text") or "")
+            content_str = "".join(parts)
+        else:
+            content_str = str(raw_content)
         return {
-            "content": choice["message"].get("content", ""),
+            "content": content_str,
             "finish_reason": choice.get("finish_reason", "stop"),
-            "usage": data.get("usage", {}),
+            "usage": usage,
+            "stats": {"prompt_tokens": usage.get("prompt_tokens", 0), "completion_tokens": usage.get("completion_tokens", 0), "total_tokens": usage.get("total_tokens", 0)},
         }
 
     async def stream_chat(

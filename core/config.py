@@ -1,5 +1,6 @@
 from __future__ import annotations
 import yaml
+import os
 from pathlib import Path
 from dataclasses import dataclass, field
 
@@ -10,6 +11,12 @@ class ModelConfig:
     name: str
     ctx_size: int = 16384
     max_output: int = 4096
+    api_key: str = ""
+
+    def __post_init__(self):
+        if self.api_key and self.api_key.startswith("${") and self.api_key.endswith("}"):
+            env_var = self.api_key[2:-1]
+            self.api_key = os.environ.get(env_var, "")
 
 
 @dataclass
@@ -45,6 +52,7 @@ class Config:
                 name=m.get("name", "default"),
                 ctx_size=m.get("ctx_size", 16384),
                 max_output=m.get("max_output", 4096),
+                api_key=m.get("api_key", ""),
             )
         return cls(
             models=models,

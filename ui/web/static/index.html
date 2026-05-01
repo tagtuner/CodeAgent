@@ -381,8 +381,8 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); min-
     <span id="modelName" style="font-size:13px;color:var(--text2)">—</span>
     <span class="proc-badge" id="procBadge"><span class="proc-dot"></span><span id="procText">Processing...</span></span>
     <span class="workspace-chip" id="workspacePath" title="">workspace: —</span>
-    <button class="btn" onclick="openBlenderDesktop()">Blender GUI</button>
     <button class="btn" onclick="togglePreviewDock()">Studio</button>
+    <a class="btn" href="/admin.html" id="adminLink" style="display:none;text-decoration:none;color:var(--text)">Admin</a>
     <button class="btn" onclick="downloadWorkspace()">Download Workspace</button>
     <button class="btn" onclick="newSession()">+ New Chat</button>
   </div>
@@ -477,11 +477,31 @@ let previewFiles = [];
 let activePreview = '';
 let processingSince = 0;
 let metricsTimer = null;
-let blenderDesktopOpened = false;
 /** @type {{path:string,name:string,size:number}[]} */
 let pendingAttachments = [];
+/** @type {string|null} */
+let pendingApprovalTool = null;
+
+function redactSecretsInArgs(toolArgs) {
+  if (!toolArgs || typeof toolArgs !== 'object') return {};
+  var o;
+  try { o = JSON.parse(JSON.stringify(toolArgs)); } catch (e) { return {}; }
+  Object.keys(o).forEach(function (k) {
+    var lk = String(k).toLowerCase();
+    if (lk.indexOf('password') >= 0 || lk === 'pass' || lk === 'token' || lk === 'secret' || lk.indexOf('api_key') >= 0)
+      o[k] = '*** (enter in SSH box below if needed) ***';
+  });
+  return o;
+}
 
 async function init() {
+  try {
+    const me = await fetch('/api/me').then(r => (r.ok ? r.json() : null));
+    if (me && me.is_admin) {
+      const al = document.getElementById('adminLink');
+      if (al) al.style.display = '';
+    }
+  } catch {}
   try {
     const health = await fetch('/api/health').then(r => r.json());
     document.getElementById('statusDot').classList.remove('offline');
@@ -726,15 +746,6 @@ function downloadWorkspace() {
   window.open(`/api/workspace/${sessionId}/download`, '_blank');
 }
 
-function blenderDesktopUrl() {
-  const host = window.location.hostname || '127.0.0.1';
-  return `http://${host}:6080/vnc.html?autoconnect=true&resize=scale&view_only=false`;
-}
-
-function openBlenderDesktop() {
-  window.open(blenderDesktopUrl(), '_blank');
-}
-
 async function loadSessions() {
   try {
     const data = await fetch('/api/sessions').then(r => r.json());
@@ -835,7 +846,6 @@ async function newSession() {
     document.getElementById('msgCount').textContent = '0';
     resetTerminal();
     resetPreviewDock();
-    blenderDesktopOpened = false;
     hideTerminal();
     addMsg('status', 'New session started — ' + sessionId);
     refreshWorkspaceImages();
@@ -852,7 +862,6 @@ async function switchSession(id) {
   document.getElementById('messages').innerHTML = '';
   resetTerminal();
   resetPreviewDock();
-  blenderDesktopOpened = false;
   hideTerminal();
   document.querySelectorAll('.session-item').forEach(el => {
     el.classList.toggle('active', el.dataset.sid === id);
@@ -945,20 +954,29 @@ function setProcessingBadge(visible, detail) {
 }
 
 function connectWS() {
-  if (ws) { ws.close(); ws = null; }
+  if (ws) {
+    ws.close();
+  }
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${proto}//${location.host}/ws/${sessionId}`);
-  ws.onmessage = (e) => handleEvent(JSON.parse(e.data));
-  ws.onerror = function () {
+  /** @type {WebSocket} */
+  const socket = new WebSocket(`${proto}//${location.host}/ws/${sessionId}`);
+  ws = socket;
+  socket.onmessage = (e) => handleEvent(JSON.parse(e.data));
+  socket.onerror = function () {
+    if (ws !== socket) return;
     addMsg('error', 'WebSocket error');
     document.getElementById('statusDot').classList.add('offline');
     resetProcessingUI();
   };
-  ws.onclose = function () {
+  socket.onclose = function () {
+    if (ws !== socket) return;
     document.getElementById('statusDot').classList.add('offline');
     resetProcessingUI();
   };
-  ws.onopen = () => document.getElementById('statusDot').classList.remove('offline');
+  socket.onopen = function () {
+    if (ws !== socket) return;
+    document.getElementById('statusDot').classList.remove('offline');
+  };
 }
 
 function handleEvent(evt) {
@@ -988,11 +1006,6 @@ function handleEvent(evt) {
       removeContinueHint();
       updateLiveStats();
       addMsg('tool', 'Calling <b>' + escHtml(evt.tool_name) + '</b>', 'tool-start');
-      if (String(evt.tool_name || '').toLowerCase() === 'blender' && !blenderDesktopOpened) {
-        blenderDesktopOpened = true;
-        openBlenderDesktop();
-        addMsg('status', 'Blender GUI opened: ' + blenderDesktopUrl());
-      }
       break;
     case 'tool_result': {
       updateLiveStats();
@@ -1402,16 +1415,28 @@ function regenerateMsg(btn) {
 /* ── Tool Approval ── */
 
 function showApprovalDialog(toolName, toolArgs) {
+  pendingApprovalTool = toolName || null;
   const container = document.getElementById('messages');
   const div = document.createElement('div');
   div.className = 'msg';
   div.id = 'approvalDialog';
-  const argsStr = toolArgs ? JSON.stringify(toolArgs, null, 2) : '{}';
+  const safeArgs = redactSecretsInArgs(toolArgs);
+  const argsStr = toolArgs ? JSON.stringify(safeArgs, null, 2) : '{}';
+  var sshBox = '';
+  if (toolName === 'ssh_remote') {
+    sshBox =
+      '<div style="margin:10px 0 0 0">' +
+        '<label style="font-size:12px;color:var(--text2)">SSH password (only if key-based login is not set on this server &mdash; not stored in chat):</label>' +
+        '<input type="password" id="approvalSshPass" autocomplete="new-password" placeholder="leave empty if using SSH keys" ' +
+        'style="width:100%;margin-top:6px;padding:8px;border-radius:6px;background:var(--bg);color:var(--text);border:1px solid var(--border);box-sizing:border-box" />' +
+      '</div>';
+  }
   div.innerHTML =
     '<div class="approval-box">' +
       '<div class="approval-title">Tool Approval Required</div>' +
       '<div class="tool-info"><strong>' + escHtml(toolName) + '</strong></div>' +
       '<pre>' + escHtml(argsStr) + '</pre>' +
+      sshBox +
       '<div class="approval-btns">' +
         '<button class="btn-allow" onclick="respondApproval(true)">Allow</button>' +
         '<button class="btn-deny" onclick="respondApproval(false)">Deny</button>' +
@@ -1422,6 +1447,13 @@ function showApprovalDialog(toolName, toolArgs) {
 }
 
 function respondApproval(approved) {
+  const patch = {};
+  if (approved && pendingApprovalTool === 'ssh_remote') {
+    var pe = document.getElementById('approvalSshPass');
+    if (pe && pe.value && String(pe.value).trim())
+      patch.password = String(pe.value).trim();
+  }
+  pendingApprovalTool = null;
   const dialog = document.getElementById('approvalDialog');
   if (dialog) {
     const box = dialog.querySelector('.approval-box');
@@ -1440,7 +1472,7 @@ function respondApproval(approved) {
     dialog.removeAttribute('id');
   }
   if (ws && ws.readyState === 1) {
-    ws.send(JSON.stringify({ type: 'tool_response', approved: approved }));
+    ws.send(JSON.stringify({ type: 'tool_response', approved: approved, patch: patch }));
   }
 }
 
