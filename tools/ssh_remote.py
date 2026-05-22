@@ -56,7 +56,7 @@ class SSHRemoteTool(BaseTool):
         "properties": {
             "host": {
                 "type": "string",
-                "description": "Remote hostname or IP (e.g. 172.30.3.204)",
+                "description": "Remote hostname or IP (e.g. 172.30.3.206)",
             },
             "user": {
                 "type": "string",
@@ -189,7 +189,7 @@ class SSHRemoteTool(BaseTool):
             if "permission denied" in stderr_l:
                 hint = (
                     "\n[HINT ssh_remote] Wrong password OR server refuses root/password login "
-                    "(check `PermitRootLogin` and `PasswordAuthentication` on 172.30.3.x). "
+                    "(check `PermitRootLogin` and `PasswordAuthentication` on the remote SSH server). "
                     "Try `ssh-copy-id` via **bash** from this host, or SSH as a sudo user "
                     "(change `user` in the tool)."
                 )

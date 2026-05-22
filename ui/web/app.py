@@ -19,6 +19,29 @@ from core.session import Session
 from core.router import Router
 from skills.loader import SkillLoader
 from tools.base import ToolRegistry
+import httpx
+
+
+def _openrouter_free_model_ids(raw_models: list) -> list[str]:
+    ids: set[str] = set()
+    for m in raw_models:
+        if not isinstance(m, dict):
+            continue
+        mid = str(m.get("id") or "").strip()
+        if not mid:
+            continue
+        if ":free" in mid.lower():
+            ids.add(mid)
+            continue
+        pr = m.get("pricing") or {}
+        try:
+            p = float(pr.get("prompt") or 0)
+            c = float(pr.get("completion") or 0)
+            if p == 0.0 and c == 0.0:
+                ids.add(mid)
+        except (TypeError, ValueError):
+            continue
+    return sorted(ids)
 
 STATIC_DIR = Path(__file__).parent / "static"
 log = logging.getLogger("codeagent.web")
@@ -385,6 +408,11 @@ def create_app(
         doc = user_access.load_document()
         gm = user_access.normalize_groups(doc)
         tw, tls, mw, mls = user_access.effective_permissions(user, gm)
+        chat_model = config.main_model.name
+        if mls and not mw:
+            chat_model = mls[0]
+        elif mw:
+            chat_model = config.main_model.name
         return {
             "auth_enabled": True,
             "username": user.get("username"),
@@ -394,13 +422,59 @@ def create_app(
             "tools": tls,
             "models_wildcard": mw,
             "models": mls,
+            "chat_model": chat_model,
         }
 
     @app.get("/api/admin/options")
     async def admin_options(_admin: dict = Depends(require_admin_dep)):
         tools = _registry.list_tools()
-        models = user_access.config_model_names(config)
-        return {"tools": tools, "models": _unique_preserve(models)}
+        cfg_models = user_access.config_model_names(config)
+        return {
+            "tools": tools,
+            "models": _unique_preserve(cfg_models),
+            "config_models": _unique_preserve(cfg_models),
+            "model_note": (
+                "Per-group OpenRouter model ids (e.g. minimax/minimax-m2.5:free). "
+                "Use * for models to use config.yaml defaults. Load catalogue via OpenRouter button."
+            ),
+        }
+
+    @app.get("/api/admin/openrouter-models")
+    async def admin_openrouter_models(
+        free_only: bool = True,
+        _admin: dict = Depends(require_admin_dep),
+    ):
+        key = (config.main_model.api_key or "").strip()
+        if not key:
+            raise HTTPException(
+                status_code=400,
+                detail="OpenRouter API key missing (models.main.api_key in config.yaml).",
+            )
+        try:
+            async with httpx.AsyncClient(timeout=45.0) as client:
+                r = await client.get(
+                    "https://openrouter.ai/api/v1/models",
+                    headers={"Authorization": f"Bearer {key}"},
+                )
+                r.raise_for_status()
+                payload = r.json()
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"OpenRouter HTTP {e.response.status_code}",
+            ) from e
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=str(e)) from e
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list):
+            data = []
+        if free_only:
+            mids = _openrouter_free_model_ids(data)
+        else:
+            mids = sorted(
+                {str(m.get("id") or "").strip() for m in data if isinstance(m, dict) and m.get("id")}
+            )
+        return {"models": mids, "count": len(mids)}
 
     @app.get("/api/admin/config")
     async def admin_get_config(_admin: dict = Depends(require_admin_dep)):
@@ -635,6 +709,9 @@ def create_app(
         m_allow: frozenset[str] | None = None
         if ws_user:
             t_allow, m_allow = user_access.effective_agent_frozensets(ws_user, _registry.list_tools())
+            ws_session_model = user_access.session_model_override(ws_user)
+        else:
+            ws_session_model = None
         await websocket.accept()
         log.info("ws accepted session=%s user=%s", session_id, (ws_user or {}).get("username"))
         session = _sessions.get(session_id)
@@ -660,6 +737,7 @@ def create_app(
             worker_dir=str(ws_dir),
             allowed_tool_names=t_allow,
             allowed_model_names=m_allow,
+            session_model_id=ws_session_model,
         )
 
         input_queue: asyncio.Queue = asyncio.Queue()
@@ -753,6 +831,7 @@ def create_app(
                             ],
                             max_tokens=300,
                             temperature=0.7,
+                            model=ws_session_model,
                         )
                         await websocket.send_text(json.dumps({
                             "type": "text",

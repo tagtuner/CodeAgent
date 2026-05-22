@@ -13,6 +13,7 @@ TOOL_MAP: dict[str, list[str]] = {
         "glob_search",
         "web_search",
         "web_fetch",
+        "image_generator",
     ],
     "ebs": ["bash", "ebs_module_guide", "ebs_concurrent_status", "oracle_query", "oracle_schema", "sql_validate", "oracle_explain", "web_search"],
     "system": [
@@ -70,7 +71,7 @@ class Router:
     def __init__(self, llm_fast: LLMClient | None = None):
         self.llm_fast = llm_fast
 
-    async def classify(self, message: str) -> str:
+    async def classify(self, message: str, model: str | None = None) -> str:
         kw_result = self._keyword_classify(message)
         if kw_result:
             return kw_result
@@ -83,6 +84,7 @@ class Router:
                 messages=[{"role": "user", "content": CLASSIFY_PROMPT.format(message=message[:300])}],
                 max_tokens=10,
                 temperature=0.1,
+                model=model,
             )
             c_text = resp.get("content") or ""
             c_text = c_text.strip() if isinstance(c_text, str) else ""

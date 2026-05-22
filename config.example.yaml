@@ -1,24 +1,29 @@
-# All slots use OpenRouter's free pool — no fixed vendor/model name; OpenRouter picks a free model per request.
-# Docs: https://openrouter.ai/docs/guides/routing/routers/free-models-router
+# Example configuration — DO NOT paste real secrets here.
+# Deploy: cp config.example.yaml /opt/codeagent/config.yaml  (then fill env vars below)
+#
+# Resolved env syntax: api_key entries like "${OPENROUTER_API_KEY}" are expanded from the process environment at runtime.
+
 models:
   main:
     url: https://openrouter.ai/api/v1
     name: openrouter/free
     ctx_size: 16384
     max_output: 4096
-    api_key: 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
+    api_key: ${OPENROUTER_API_KEY}
+
   fast:
     url: https://openrouter.ai/api/v1
     name: openrouter/free
     ctx_size: 8192
     max_output: 2048
-    api_key: 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
+    api_key: ${OPENROUTER_API_KEY}
+
   opus:
     url: https://openrouter.ai/api/v1
     name: openrouter/free
     ctx_size: 16384
     max_output: 4096
-    api_key: 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
+    api_key: ${OPENROUTER_API_KEY}
 
 router:
   model: fast
@@ -70,6 +75,10 @@ tools:
     enabled: true
   ebs:
     enabled: true
+  pollinations:
+    # Optional override; Pollinations Bearer key reads POLLINATIONS_API_KEY first anyway.
+    api_key: ${POLLINATIONS_API_KEY}
+    base_url: https://gen.pollinations.ai
 
 skills_dir: /opt/codeagent/skills/library
 
@@ -86,7 +95,6 @@ permissions:
 
 session:
   dir: /opt/codeagent/sessions
-  # Lower = faster prefill per turn. Raise if long threads lose context.
   max_history_tokens: 2048
 
 agent:

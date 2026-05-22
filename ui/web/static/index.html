@@ -380,10 +380,10 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); min-
     <span class="status-dot" id="statusDot"></span>
     <span id="modelName" style="font-size:13px;color:var(--text2)">—</span>
     <span class="proc-badge" id="procBadge"><span class="proc-dot"></span><span id="procText">Processing...</span></span>
-    <span class="workspace-chip" id="workspacePath" title="">workspace: —</span>
+    <span class="workspace-chip" id="workspacePath" title="" style="display:none;">workspace: —</span>
     <button class="btn" onclick="togglePreviewDock()">Studio</button>
     <a class="btn" href="/admin.html" id="adminLink" style="display:none;text-decoration:none;color:var(--text)">Admin</a>
-    <button class="btn" onclick="downloadWorkspace()">Download Workspace</button>
+    <button class="btn" onclick="downloadWorkspace()" style="display:none;">Download Workspace</button>
     <button class="btn" onclick="newSession()">+ New Chat</button>
   </div>
 </div>
@@ -416,6 +416,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); min-
         <div class="preview-btns">
           <button class="preview-btn" onclick="openCurrentPreview()">Open</button>
           <button class="preview-btn" onclick="downloadCurrentPreview()">Download</button>
+          <button class="preview-btn" onclick="toggleVNCViewport()" id="vncBtn">3D Viewport</button>
           <button class="preview-btn" onclick="togglePreviewDock(false)">Hide</button>
         </div>
       </div>
@@ -495,8 +496,9 @@ function redactSecretsInArgs(toolArgs) {
 }
 
 async function init() {
+  let me = null;
   try {
-    const me = await fetch('/api/me').then(r => (r.ok ? r.json() : null));
+    me = await fetch('/api/me').then(r => (r.ok ? r.json() : null));
     if (me && me.is_admin) {
       const al = document.getElementById('adminLink');
       if (al) al.style.display = '';
@@ -505,7 +507,8 @@ async function init() {
   try {
     const health = await fetch('/api/health').then(r => r.json());
     document.getElementById('statusDot').classList.remove('offline');
-    document.getElementById('modelName').textContent = health.model || '—';
+    const label = (me && me.auth_enabled && me.chat_model) ? me.chat_model : (health.model || '—');
+    document.getElementById('modelName').textContent = label;
   } catch {
     document.getElementById('statusDot').classList.add('offline');
   }
@@ -586,6 +589,12 @@ function togglePreviewDock(forceVisible) {
 }
 
 function resetPreviewDock() {
+  vncActive = false;
+  const btn = document.getElementById('vncBtn');
+  if (btn) {
+    btn.textContent = '3D Viewport';
+    btn.style.background = '';
+  }
   previewFiles = [];
   activePreview = '';
   const main = document.getElementById('previewMain');
@@ -602,10 +611,49 @@ function previewDownloadUrl(rel) {
   return `/api/workspace/${sessionId}/download-file?path=${encodeURIComponent(rel)}`;
 }
 
+let vncActive = false;
+
+function toggleVNCViewport() {
+  const main = document.getElementById('previewMain');
+  const btn = document.getElementById('vncBtn');
+  if (!main || !btn) return;
+  
+  if (!vncActive) {
+    const iframe = document.createElement('iframe');
+    const vncUrl = `http://${window.location.hostname}:6080/vnc.html?autoconnect=true&resize=scale`;
+    iframe.src = vncUrl;
+    iframe.style.width = '100%';
+    iframe.style.height = '100%';
+    iframe.style.border = 'none';
+    iframe.allowFullscreen = true;
+    iframe.setAttribute('allowfullscreen', 'true');
+    iframe.setAttribute('allow', 'fullscreen');
+    
+    main.innerHTML = '';
+    main.appendChild(iframe);
+    btn.textContent = 'Show Image';
+    btn.style.background = '#28a745';
+    vncActive = true;
+  } else {
+    vncActive = false;
+    btn.textContent = '3D Viewport';
+    btn.style.background = '';
+    renderPreviewDock();
+  }
+}
+
 function renderPreviewDock() {
   const list = document.getElementById('previewList');
   const main = document.getElementById('previewMain');
   if (!list || !main) return;
+  
+  const vncBtn = document.getElementById('vncBtn');
+  if (vncBtn && !vncActive) {
+    vncBtn.textContent = '3D Viewport';
+    vncBtn.style.background = '';
+  }
+  if (vncActive) return;
+
   list.innerHTML = '';
   previewFiles.forEach(rel => {
     const card = document.createElement('div');
@@ -615,6 +663,12 @@ function renderPreviewDock() {
     thumb.alt = rel;
     thumb.title = rel;
     thumb.onclick = function () {
+      vncActive = false;
+      const btn = document.getElementById('vncBtn');
+      if (btn) {
+        btn.textContent = '3D Viewport';
+        btn.style.background = '';
+      }
       activePreview = rel;
       renderPreviewDock();
     };
@@ -1016,6 +1070,33 @@ function handleEvent(evt) {
         const paths = extractWorkspaceImagePaths(raw);
         if (paths.length) addImagePreview(paths);
         else maybeTriggerPreviewFromToolResult(raw);
+        
+        // Native automatic browser downloads for modern developer experience
+        if (evt.tool_name === 'write_file' && evt.tool_args && evt.tool_args.path) {
+          const filename = evt.tool_args.path.split('/').pop();
+          const content = evt.tool_args.content || '';
+          const blob = new Blob([content], { type: 'text/plain' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        } else if (evt.tool_name === 'image_generator') {
+          paths.forEach(function(p) {
+            const filename = p.split('/').pop();
+            const downloadUrl = '/api/workspace/' + sessionId + '/download-file?path=' + encodeURIComponent(p);
+            const a = document.createElement('a');
+            a.href = downloadUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+          });
+        }
+        
         refreshWorkspaceImages();
         showContinueHint();
       });

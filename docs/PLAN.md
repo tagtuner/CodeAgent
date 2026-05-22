@@ -251,7 +251,7 @@ tools:
     allowed_dirs: [/opt, /home, /root, /tmp]
   oracle:
     enabled: true
-    default_host: "172.30.1.x"
+    default_host: "db.company.internal.example"
     default_port: "1521"
 
 mcp_servers:

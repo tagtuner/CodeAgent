@@ -9,6 +9,7 @@
       --bg: #0d1117; --surface: #161b22; --border: #30363d;
       --text: #e6edf3; --text2: #8b949e; --accent: #58a6ff; --green: #3fb950; --red: #f85149;
       --font: 'Segoe UI', system-ui, sans-serif;
+      --mono: ui-monospace, 'Cascadia Code', monospace;
     }
     * { box-sizing: border-box; }
     body { font-family: var(--font); background: var(--bg); color: var(--text); margin: 0; padding: 16px 20px 40px; max-width: 1100px; margin-left: auto; margin-right: auto; }
@@ -19,6 +20,7 @@
     th, td { border: 1px solid var(--border); padding: 8px; vertical-align: top; }
     th { background: var(--surface); text-align: left; color: var(--text2); font-weight: 600; }
     input, textarea { width: 100%; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 6px 8px; font-family: inherit; font-size: 13px; }
+    input[list] { font-family: var(--mono, monospace); font-size: 12px; }
     textarea { min-height: 52px; resize: vertical; }
     .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
     .btn { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; text-decoration: none; display: inline-block; }
@@ -35,7 +37,7 @@
   <div class="top">
     <div>
       <h1>CodeAgent Admin</h1>
-      <p class="hint">Groups define which <strong>tools</strong> and <strong>models</strong> (same strings as in <code>config.yaml</code>) members get. Users inherit the <strong>union</strong> of their groups. Use <code>*</code> for all tools or all models. At least one user must stay in the <code>admin</code> group.</p>
+      <p class="hint">Groups define <strong>tools</strong> and <strong>OpenRouter model ids</strong> (API <code>model</code> field, e.g. <code>minimax/minimax-m2.5:free</code>). Users inherit the <strong>union</strong> of groups; first model id is used for chat. Use <code>*</code> for all tools or all models (then names come from <code>config.yaml</code>). Needs OpenRouter base URL + API key in config. At least one user must stay in the <code>admin</code> group.</p>
     </div>
     <div class="row">
       <a class="btn" href="/">← Chat</a>
@@ -43,6 +45,12 @@
       <button type="button" class="btn btn-primary" id="btnSave">Save</button>
     </div>
   </div>
+
+  <div class="row" style="margin-bottom:10px">
+    <button type="button" class="btn" id="btnOpenRouter">Load free OpenRouter model ids</button>
+    <span id="orStatus" style="font-size:12px;color:var(--text2)"></span>
+  </div>
+  <datalist id="openrouterModels"></datalist>
 
   <h2>Groups</h2>
   <table id="groupsTable">
@@ -90,7 +98,7 @@
         tr.innerHTML =
           '<td><input type="text" data-k="gname" value="' + esc(name) + '"' + (String(name).toLowerCase() === 'admin' ? ' readonly' : '') + '></td>' +
           '<td><textarea data-k="gtools">' + esc(joinCS(g.tools)) + '</textarea></td>' +
-          '<td><textarea data-k="gmodels">' + esc(joinCS(g.models)) + '</textarea></td>' +
+          '<td><input type="text" data-k="gmodels" list="openrouterModels" value="' + esc(joinCS(g.models)) + '" placeholder="e.g. minimax/minimax-m2.5:free or *" /></td>' +
           '<td><button type="button" class="btn" data-act="rmg">Remove</button></td>';
         tr.querySelector('[data-act="rmg"]').onclick = function () { tr.remove(); };
         tb.appendChild(tr);
@@ -177,6 +185,26 @@
     };
 
     document.getElementById('btnReload').onclick = loadAll;
+
+    document.getElementById('btnOpenRouter').onclick = async function () {
+      var st = document.getElementById('orStatus');
+      st.textContent = 'Loading…';
+      try {
+        var r = await fetch('/api/admin/openrouter-models?free_only=true');
+        var j = await r.json();
+        if (!r.ok) throw new Error(typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail || j));
+        var dl = document.getElementById('openrouterModels');
+        dl.innerHTML = '';
+        (j.models || []).forEach(function (id) {
+          var o = document.createElement('option');
+          o.value = id;
+          dl.appendChild(o);
+        });
+        st.textContent = (j.count || 0) + ' ids (suggestions in Models fields).';
+      } catch (e) {
+        st.textContent = 'Failed: ' + (e.message || e);
+      }
+    };
 
     document.getElementById('btnSave').onclick = async function () {
       var body = collect();

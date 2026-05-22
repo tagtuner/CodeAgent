@@ -41,9 +41,10 @@ class LLMClient:
         temperature: float = 0.7,
         repeat_penalty: float = 1.15,
         top_p: float = 0.9,
+        model: str | None = None,
     ) -> dict:
         payload = {
-            "model": self.model,
+            "model": model if model else self.model,
             "messages": messages,
             "max_tokens": max_tokens or self.max_output,
             "temperature": temperature,
@@ -84,9 +85,10 @@ class LLMClient:
         temperature: float = 0.7,
         repeat_penalty: float = 1.15,
         top_p: float = 0.9,
+        model: str | None = None,
     ) -> AsyncIterator[Chunk]:
         payload = {
-            "model": self.model,
+            "model": model if model else self.model,
             "messages": messages,
             "max_tokens": max_tokens or self.max_output,
             "temperature": temperature,

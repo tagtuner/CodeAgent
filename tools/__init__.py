@@ -5,6 +5,7 @@ from .git_tool import GitStatusTool, GitDiffTool, GitCommitTool
 from .oracle import OracleQueryTool, OracleSchemaTool, SqlValidateTool, OracleExplainTool
 from .ebs import EBSModuleGuideTool, EBSConcurrentStatusTool
 from .ssh_remote import SSHRemoteTool
+from .image_gen import ImageGenTool
 
 __all__ = [
     "BaseTool", "ToolRegistry",
@@ -14,4 +15,5 @@ __all__ = [
     "OracleQueryTool", "OracleSchemaTool", "SqlValidateTool", "OracleExplainTool",
     "EBSModuleGuideTool", "EBSConcurrentStatusTool",
     "SSHRemoteTool",
+    "ImageGenTool",
 ]

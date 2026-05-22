@@ -25,6 +25,7 @@ from tools.oracle import OracleQueryTool, OracleSchemaTool, SqlValidateTool, Ora
 from tools.ebs import EBSModuleGuideTool, EBSConcurrentStatusTool
 from tools.ssh_remote import SSHRemoteTool
 from tools.web_search import WebSearchTool, WebFetchTool
+from tools.image_gen import ImageGenTool
 from mcp.client import MCPClient
 from mcp.registry import MCPRegistry
 from skills.manager import SkillManager
@@ -74,6 +75,9 @@ def build_registry(config: Config) -> ToolRegistry:
     if tool_cfg.get("web", {}).get("enabled", True):
         registry.register(WebSearchTool())
         registry.register(WebFetchTool())
+
+    # Always register image generator
+    registry.register(ImageGenTool())
 
     return registry
 

@@ -3,6 +3,14 @@ __pycache__/
 *.pyo
 .env
 sessions/
+# Repo must not ship real YAML credentials (use config.example.yaml)
+config.yaml
+config/*.bak
+config/*.backup*
+config/users.yaml.backup*
+config/users.yaml.bak*
+*.bak
+
 *.log
 .venv/
 venv/
@@ -14,3 +22,34 @@ build/
 
 # Local auth — never commit real password hashes (create from users.example.yaml on deploy).
 config/users.yaml
+
+# Pollinations key file (local + server); never commit.
+secrets/pollinations.env
+
+# Local junk / experiments
+fix_agent*.py
+core/agent_fixed.py
+core/prompt_new.py
+check_prompt*.py
+test_boot.py
+test_config.py
+test_direct.py
+test_model.py
+test_prompt.py
+test_render.*
+email.txt
+blender-test0001.png
+
+# Blender adjunct (heavy; untrack by default)
+/deploy/systemd/codeagent-blender-gui.service
+/scripts/blender-mcp-autostart.py
+/scripts/blender_isometric_camera.py
+/scripts/blender_mcp.py
+/scripts/start-blender-desktop.sh
+/scripts/start-blender-gui-mcp.sh
+/scripts/ws_blender_smoke.py
+/tools/blender_tool.py
+
+/ui/web/agent.py
+/ui/web/file_ops.py
+/ui/web/prompt.py

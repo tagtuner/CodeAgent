@@ -1,6 +1,6 @@
 # CodeAgent
 
-A local LLM-powered agentic coding assistant with smart 3-model routing (27B + 14B + 1.5B). Replaces cloud-dependent AI assistants with a fully self-hosted solution running on CPU — no GPU required.
+A local LLM-powered agentic coding assistant optimized for small/medium models (14B parameters). Replaces cloud-dependent AI assistants with a fully self-hosted solution.
 
 ## Why CodeAgent?
 
@@ -8,10 +8,10 @@ Most AI coding assistants (OpenCode, Cursor, etc.) waste **14,000+ tokens** on s
 
 ### Key Features
 
-- **Smart 3-Model Router**: 1.5B classifies → routes to **14B main** (coding/system), **27B Opus** (EBS-heavy), or **1.5B** (greetings/fast summaries)
+- **Smart Router**: 1.5B model classifies requests → only relevant tools injected (not all 13+)
 - **Agentic Tool Loop**: LLM calls tools, gets results, reasons, calls more tools — like a real agent
-- **Core + MCP Tooling**: Built-in tools (bash, blender, file ops, git, Oracle/EBS, web) plus auto-registered MCP tools (e.g., `mcp_blender_*`) when configured
-- **Parallel Multi-Worker Terminals**: Unlimited concurrent bash workers with tabbed UI (W1, W2, …), each with its own persistent shell session — like tmux split panes in a browser (still subject to server RAM/ulimit)
+- **13 Built-in Tools**: bash, file read/write/edit, glob search, git, Oracle DB, EBS module guide
+- **Parallel Multi-Worker Terminals**: Up to 5 concurrent bash workers with tabbed UI, each with its own persistent shell session — like tmux split panes in a browser
 - **Tool Approval System**: Every tool call requires user approval before execution (Allow/Deny)
 - **Stop/Cancel**: Abort any ongoing AI response or worker mid-stream
 - **Message Actions**: Copy, Edit, Regenerate, Delete on every chat message
@@ -21,13 +21,6 @@ Most AI coding assistants (OpenCode, Cursor, etc.) waste **14,000+ tokens** on s
 - **Live Token Stats**: Real-time token count, elapsed time, tokens/sec — resets per request, just like llama.cpp's UI
 - **Session Management**: Save/load/delete conversation history with token-aware trimming
 - **Mid-Task Queries**: Ask questions while workers are running — AI responds based on live terminal state
-- **Web UI responsiveness**: Streams assistant text as plain monospace during generation; markdown is applied when the assistant message completes. After a tool result, a short “next model step” status line shows that the agent is still working until the next tokens arrive.
-- **Live Design Studio**: Resizable right-side preview panel for generated images, with per-file open/download and workspace zip download
-- **Composer Uploads**: Upload images/files directly from chat composer into per-session workspace `uploads/`
-- **Workspace-Aware Artifacts**: Per-session workspace directories (`/opt/codeagent/workspaces/<session_id>`) with API endpoints for file preview and downloads
-- **Processing Badge**: Header shows live stage + elapsed seconds (routing, generating, approval wait, tool run, finalizing)
-- **Fast Completion Summaries**: Post-tool summaries use a fast model path with strict timeout and deterministic fallback
-- **llama.cpp tuning**: For faster 14B / Opus inference (GPU layers, quant, batch, context), see [docs/LLAMA_SPEED.md](docs/LLAMA_SPEED.md).
 
 ### Architecture
 
@@ -35,14 +28,10 @@ Most AI coding assistants (OpenCode, Cursor, etc.) waste **14,000+ tokens** on s
 User Message
   → Smart Router (1.5B model, instant classification)
   → Category: simple | coding | ebs | system
-  → Model Selection:
-      coding/system → 14B main (fast default path)
-      ebs           → 27B Opus (deep reasoning)
-      simple        → 1.5B fast (greetings/quick turns)
   → Prompt Builder (inject only relevant 2-4 tools, ~800 tokens)
-  → Selected LLM generates response or tool calls
+  → LLM (14B model) generates response or tool calls
   → If tool call: approval prompt → user Allow/Deny
-  → If bash: WorkerPool assigns worker (W1, W2, …) → live terminal output
+  → If bash: WorkerPool assigns worker (W1-W5) → live terminal output
   → Tool result fed back → re-prompt → final response
   → Token stats displayed (prompt/completion/total/t/s)
 ```
@@ -51,7 +40,7 @@ User Message
 
 CodeAgent runs entirely on **CPU** — no GPU required. Tested and working on:
 
-### Minimum (for 14B + 1.5B models only)
+### Minimum (for 14B + 1.5B models)
 
 | Component | Minimum | Recommended |
 |---|---|---|
@@ -61,82 +50,59 @@ CodeAgent runs entirely on **CPU** — no GPU required. Tested and working on:
 | GPU | Not required | Optional (CUDA/ROCm for faster inference) |
 | OS | Linux (Ubuntu 20.04+ / Oracle Linux 8+) | Ubuntu 24.04 / Oracle Linux 9 |
 
-### Recommended (for all 3 models: 27B + 14B + 1.5B)
-
-| Component | Recommended |
-|---|---|
-| CPU | 16+ cores / 32 threads |
-| RAM | 64 GB |
-| Disk | 80 GB+ free |
-| GPU | Not required (CPU-only works) |
-| OS | Ubuntu 24.04 / Oracle Linux 9 |
-
 ### Tested Configuration
 
 This project was built and tested on:
 
 ```
-CPU:    32 vCPUs (16 cores × 2 threads)
-RAM:    64 GB DDR4
-Disk:   146 GB
+CPU:    Intel Xeon E5-2683 v4 @ 2.10GHz (8 vCPUs)
+RAM:    32 GB DDR4
+Disk:   146 GB (23 GB used)
 GPU:    None (CPU-only inference)
 OS:     Ubuntu / Oracle Linux
-Models: 3 concurrent llama.cpp servers (27B + 14B + 1.5B)
 ```
 
 ### Model RAM Usage
 
-| Model | Port | File Size | RAM at Runtime | Role |
-|---|---|---|---|---|
-| Qwen3.5 27B Opus Distilled Q4_K_M | 8085 | ~16 GB | ~18 GB | Coding, EBS, Writing |
-| Qwen 2.5 Coder 14B Q4_K_M | 8080 | ~8.4 GB | ~10 GB | System/Infrastructure |
-| Qwen 2.5 1.5B Instruct Q4_K_M | 8090 | ~1.0 GB | ~1.5 GB | Router + Quick greetings |
-| **Total (all 3 models)** | | **~25.4 GB** | **~30 GB** | |
+| Model | File Size | RAM at Runtime |
+|---|---|---|
+| Qwen 2.5 Coder 14B Q4_K_M | ~8.4 GB | ~10 GB |
+| Qwen 2.5 1.5B Instruct Q4_K_M | ~1.0 GB | ~1.5 GB |
+| **Total (both models)** | **~9.4 GB** | **~12 GB** |
 
-### Performance (CPU-only, 32 vCPUs)
+### Performance (CPU-only)
 
-| Metric | 27B Opus | 14B Coder | 1.5B Fast |
-|---|---|---|---|
-| Prompt processing | ~10-18 t/s | ~15-25 t/s | ~80-120 t/s |
-| Token generation | ~2-4 t/s | ~3-6 t/s | ~20-40 t/s |
-| Time to first token | ~3-8 sec | ~2-5 sec | ~0.5-1 sec |
+| Metric | 14B Model | 1.5B Model |
+|---|---|---|
+| Prompt processing | ~15-25 tokens/sec | ~80-120 tokens/sec |
+| Token generation | ~3-6 tokens/sec | ~20-40 tokens/sec |
+| Time to first token | ~2-5 sec | ~0.5-1 sec |
 
-> **Note**: With GPU acceleration (NVIDIA CUDA), models can achieve 30-80+ tokens/sec generation speed. llama.cpp supports CUDA, ROCm, Metal, and Vulkan backends.
+> **Note**: With GPU acceleration (NVIDIA CUDA), the 14B model can achieve 30-80+ tokens/sec generation speed. llama.cpp supports CUDA, ROCm, Metal, and Vulkan backends.
 
 ### llama.cpp Server Configuration
 
-For the **27B Opus model** (port 8085) — coding/EBS/writing:
-```bash
-llama-server \
-  --model Qwen3.5-27B-Opus-Q4_K_M.gguf \
-  --host 127.0.0.1 --port 8085 \
-  --ctx-size 32768 --batch-size 512 --ubatch-size 256 \
-  --parallel 2 --cont-batching \
-  --cache-type-k q8_0 --cache-type-v q8_0 \
-  --threads 16 --no-mmap --jinja -ngl 0
-```
-
-For the **14B main model** (port 8080) — system/infrastructure:
+For the **14B main model** (port 8080):
 ```bash
 llama-server \
   --model qwen2.5-coder-14b-instruct-q4_k_m.gguf \
-  --host 127.0.0.1 --port 8080 \
+  --host 0.0.0.0 --port 8080 \
   --ctx-size 32768 \
   --parallel 2 \
-  --threads 20
+  --threads 6
 ```
 
-For the **1.5B fast model** (port 8090) — router/greetings:
+For the **1.5B fast model** (port 8090):
 ```bash
 llama-server \
   --model qwen2.5-1.5b-instruct-q4_k_m.gguf \
-  --host 127.0.0.1 --port 8090 \
+  --host 0.0.0.0 --port 8090 \
   --ctx-size 8192 \
   --parallel 2 \
-  --threads 4
+  --threads 2
 ```
 
-> **Tip**: Adjust `--threads` based on your CPU core count. Use `--no-mmap` for the 27B model to prevent disk I/O bottlenecks. All 3 servers run concurrently — ensure enough RAM.
+> **Tip**: Use `--parallel 2` with `--ctx-size 32768` to get 16K tokens per slot — enough for CodeAgent's optimized prompts. Adjust `--threads` based on your CPU core count.
 
 ## Quick Start
 
@@ -157,9 +123,13 @@ cd CodeAgent
 # Install dependencies
 pip install -r requirements.txt
 
-# Copy and edit config
-cp config.yaml /opt/codeagent/config.yaml
-# Edit config.yaml with your model URLs, Oracle DB details, etc.
+# Create server config from the example template (never commit real API keys).
+cp config.example.yaml /opt/codeagent/config.yaml
+# Prefer environment variables for secrets, e.g. OPENROUTER_API_KEY, POLLINATIONS_API_KEY
+# YAML supports ${OPENROUTER_API_KEY} placeholders — resolved at runtime (see ModelConfig).
+
+# Optional Pollinations secrets file:
+# mkdir -p /opt/codeagent/secrets && chmod 700 /opt/codeagent/secrets
 
 # Deploy (creates systemd services, nginx proxy, skill files)
 chmod +x deploy.sh
@@ -183,35 +153,22 @@ python3 main.py chat "Write a Python function to parse CSV"
 
 ### Configuration
 
-Edit `config.yaml`:
+Shipped template: **`config.example.yaml`** (no secrets).
+
+On the server, maintain **`/opt/codeagent/config.yaml`** (gitignored locally if you symlink). For llama.cpp self-hosted backends, configure model URLs similarly to:
 
 ```yaml
 models:
   main:
-    url: http://127.0.0.1:8080/v1    # 14B — system/infrastructure tasks
+    url: http://127.0.0.1:8080/v1    # llama.cpp server (14B model)
     name: qwen2.5-coder-14b
     ctx_size: 16384
     max_output: 4096
   fast:
-    url: http://127.0.0.1:8090/v1    # 1.5B — router + quick greetings
+    url: http://127.0.0.1:8090/v1    # llama.cpp server (1.5B model)
     name: qwen2.5-1.5b
     ctx_size: 8192
     max_output: 512
-  opus:
-    url: http://127.0.0.1:8085/v1    # 27B — coding/EBS/writing (best quality)
-    name: qwen3.5-27b-opus
-    ctx_size: 16384
-    max_output: 4096
-
-session:
-  dir: /opt/codeagent/sessions
-  max_history_tokens: 2048
-
-agent:
-  max_iterations: 4
-  repeat_penalty: 1.15
-  temperature: 0.2
-  top_p: 0.9
 ```
 
 ## Project Structure
@@ -219,7 +176,7 @@ agent:
 ```
 CodeAgent/
 ├── main.py                  # CLI entry point (tui | web | chat)
-├── config.yaml              # Configuration
+├── config.example.yaml      # Safe template (${ENV} placeholders) → copy to /opt/codeagent/config.yaml
 ├── requirements.txt         # Python dependencies
 ├── deploy.sh                # Automated deployment script
 ├── core/                    # Core engine
@@ -229,13 +186,16 @@ CodeAgent/
 │   ├── prompt.py            # Smart prompt builder (<1000 token system prompts)
 │   ├── router.py            # 1.5B-based request classifier
 │   ├── session.py           # Conversation history with token-aware trimming
-│   └── worker.py            # SubWorker + WorkerPool (unlimited parallel bash terminals by default)
+│   └── worker.py            # SubWorker + WorkerPool (max 5 parallel bash terminals)
 ├── tools/                   # Tool system
 │   ├── base.py              # BaseTool + ToolRegistry
 │   ├── bash_tool.py         # Shell command execution
 │   ├── file_ops.py          # File read/write/edit/search
 │   ├── git_tool.py          # Git operations
 │   ├── oracle.py            # Oracle DB query/schema/validate/explain
+│   ├── ssh_remote.py        # One-shot remote SSH helper
+│   ├── web_search.py        # Web tools
+│   ├── image_gen.py         # Pollinations image generation (Flux Schnell)
 │   └── ebs.py               # Oracle EBS module knowledge guide
 ├── mcp/                     # Model Context Protocol client
 │   ├── client.py            # MCP protocol (stdio + SSE transport)
@@ -334,55 +294,55 @@ mcp_servers:
     url: http://localhost:3100/sse
 ```
 
-MCP tools are auto-discovered and registered on startup, and are now available in coding/system/EBS flows when connected.
+MCP tools are auto-discovered and registered on startup.
+
+## Image generation (Pollinations)
+
+The `image_generator` tool calls Pollinations (`https://gen.pollinations.ai`) and **always** uses the image model **`flux`** (Flux Schnell in the Pollinations API model list). It does **not** use your OpenRouter chat model ID.
+
+Set the key on the server (recommended):
+
+```bash
+export POLLINATIONS_API_KEY='your-enter.pollinations.ai-key'
+# optional:
+export POLLINATIONS_BASE_URL='https://gen.pollinations.ai'
+```
+
+Or a **secrets file on the server** (not tracked in git; `chmod 600`):
+
+```bash
+# /opt/codeagent/secrets/pollinations.env — single line:
+# POLLINATIONS_API_KEY='...'
+mkdir -p /opt/codeagent/secrets && chmod 700 /opt/codeagent/secrets
+```
+
+Or reference env from `config.yaml`:
+
+```yaml
+tools:
+  pollinations:
+    api_key: ${POLLINATIONS_API_KEY}
+    base_url: https://gen.pollinations.ai
+```
+
+**Docs:** procedural walkthrough `docs/WALKTHROUGH_POLLINATIONS_IMAGE.md` · stable context snapshot `docs/LONG_TERM_MEMORY_CODEAGENT_POLLINATIONS.md`.
 
 ## Recommended Models
 
-| Model | Size | Use Case | HuggingFace |
-|---|---|---|---|
-| **Qwen3.5 27B Opus Distilled Q4_K_M** | 16 GB | Coding, EBS, writing (best reasoning) | [Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF](https://huggingface.co/Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF) |
-| Qwen 2.5 Coder 14B Q4_K_M | 8.4 GB | System/infrastructure tasks | [bartowski/Qwen2.5-Coder-14B-Instruct-GGUF](https://huggingface.co/bartowski/Qwen2.5-Coder-14B-Instruct-GGUF) |
-| Qwen 2.5 1.5B Instruct Q4_K_M | 1.0 GB | Fast router + simple greetings | [bartowski/Qwen2.5-1.5B-Instruct-GGUF](https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF) |
+| Model | Size | Use Case |
+|---|---|---|
+| Qwen 2.5 Coder 14B Q4_K_M | 8.4 GB | Main coding model |
+| Qwen 2.5 1.5B Instruct Q4_K_M | 1.0 GB | Fast router/simple queries |
+| Qwen 2.5 Coder 32B Q4_K_M | 18 GB | Better quality (needs more RAM) |
 
 ## Changelog
 
-### v0.9 — Blender MCP Live Integration (Latest)
-- **Blender MCP server wiring**: Added default `mcp_servers.blender` config support for local `blender-mcp`
-- **Dynamic MCP tool availability**: Agent now includes discovered `mcp_*` tools in active tool set for coding/system/EBS categories
-- **Robust stdio MCP parsing**: Client skips non-JSON startup noise and reads JSON-RPC responses reliably
-- **Interactive-first Blender guidance**: Prompt and routing updated to prefer `mcp_blender_*` for scene edits/snapshots, while keeping local `blender` for deterministic headless exports
-- **New skill**: Added `blender_mcp_live_mode.md` for viewport-first iterative 3D workflows
-
-### v0.8 — Uploads + Blender Tooling
-- **Composer uploads**: Added image/file upload buttons in web composer with workspace `uploads/` persistence
-- **Attachment-aware execution**: WebSocket message payload now carries validated attachment paths (server-side restricted to `uploads/`)
-- **Per-request skill trigger injection**: Skill markdown is activated dynamically from request keywords before each run
-- **Dedicated Blender tool**: New structured `blender` tool for headless `.blend` runs (safe argv, timeout, and absolute-path checks)
-- **Design routing upgrades**: Router now recognizes upload/attachment/pattern/variation and Blender cues for coding flow
-- **Design skill pack**: Added `design_studio_workflows.md` for ImageMagick/Blender workspace-safe workflows
-
-### v0.7 — Fast Mode + Studio Workflow
-- **Fast mode defaults**: coding/system tasks prefer 14B main; EBS stays on Opus when needed
-- **Latency tuning**: lower history window (`2048`) + fewer max iterations (`4`) for faster first response
-- **Duplicate-call guard**: skips repeated identical tool calls in the same turn
-- **Image workflow hardening**: workspace-scoped output normalization + latest-image fallback detection
-- **Binary output safety**: `read_file` blocks binary dumps and UI suppresses binary-like tool output
-- **Live Design Studio**: resizable preview dock with per-file open/download + workspace download API
-- **Processing visibility**: live header badge shows stage and elapsed time
-- **Fast summary path**: quick post-tool summary with timeout + deterministic fallback
-
-### v0.6 — 3-Model Smart Routing with 27B Opus
-- **Qwen3.5-27B Opus Distilled**: Added as primary model for coding, EBS, and writing tasks — fine-tuned on Claude 4.6 Opus reasoning
-- **Smart 3-model routing**: Coding/EBS → 27B Opus, System → 14B Coder, Greetings → 1.5B Fast
-- **Non-greeting simple tasks** (draft, write, explain) now routed to 27B for superior quality
-- **64GB RAM / 32 vCPU** tested configuration — all 3 models running concurrently on CPU
-
-### v0.5 — Parallel Multi-Worker Terminals
-- **WorkerPool**: Unlimited concurrent bash workers by default, each with its own persistent shell
+### v0.5 — Parallel Multi-Worker Terminals (Latest)
+- **WorkerPool**: Up to 5 concurrent bash workers, each with its own persistent shell
 - **Tabbed Terminal UI**: W1, W2, W3... tabs with color-coded status dots (yellow=running, green=done, red=error)
 - **Per-worker controls**: Kill individual workers via tab, clear output, minimize panel
 - **Mid-task queries**: Ask the AI questions while workers execute — responds using live terminal context from all workers
-- **No hard worker cap by default**: protect the host with OS limits (RAM, `ulimit`, etc.); optional cap can be set in code via `WorkerPool.MAX_WORKERS` if needed
+- **Hard limit**: Max 5 workers enforced to protect server resources
 
 ### v0.4 — Sub-Worker Terminal System
 - Persistent background bash shell for command execution

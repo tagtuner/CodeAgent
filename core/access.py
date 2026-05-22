@@ -112,6 +112,19 @@ def effective_agent_frozensets(
     return ta, ma
 
 
+def session_model_override(user_row: dict | None) -> str | None:
+    """OpenRouter `model` id for API calls when groups/users list concrete models (not `*`).
+    First model id wins if several are listed. None → use config.yaml model name."""
+    if not user_row:
+        return None
+    doc = load_document()
+    gm = normalize_groups(doc)
+    _tw, _tls, mw, mls = effective_permissions(user_row, gm)
+    if mw or not mls:
+        return None
+    return str(mls[0]).strip() or None
+
+
 def get_user_by_username(username: str) -> dict | None:
     if not username:
         return None

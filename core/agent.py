@@ -79,6 +79,7 @@ class Agent:
         worker_dir: str | None = None,
         allowed_tool_names: frozenset[str] | None = None,
         allowed_model_names: frozenset[str] | None = None,
+        session_model_id: str | None = None,
     ):
         self.config = config
         self.llm_main = llm_main
@@ -100,6 +101,12 @@ class Agent:
         self._run_category: str = ""
         self.allowed_tool_names = allowed_tool_names
         self.allowed_model_names = allowed_model_names
+        sid = (session_model_id or "").strip()
+        self.session_model_id = sid or None
+
+    def _api_model(self) -> str | None:
+        """Per-request OpenRouter model id; None → LLMClient uses config default."""
+        return self.session_model_id
 
     async def run(self, user_message: str) -> AsyncIterator[AgentEvent]:
         self._last_shell_output = ""
@@ -108,23 +115,19 @@ class Agent:
         log.info("run start session=%s msg='%s'", sid, user_message.replace("\n", " ")[:180])
 
         if self.allowed_model_names is not None:
-            for llm, label in (
-                (self.llm_main, "main"),
-                (self.llm_fast, "fast"),
-                (self.llm_opus, "opus"),
-            ):
-                if llm and llm.model not in self.allowed_model_names:
-                    yield AgentEvent(
-                        type="error",
-                        content=(
-                            f"Model '{llm.model}' ({label}) is not allowed for your account. "
-                            "An admin can update your groups in Admin."
-                        ),
-                    )
-                    yield AgentEvent(type="done")
-                    return
+            mid = self.session_model_id
+            if not mid or mid not in self.allowed_model_names:
+                yield AgentEvent(
+                    type="error",
+                    content=(
+                        "Chat model is missing or not allowed for your account. "
+                        "An admin must set a valid OpenRouter model id in Admin → Groups → Models."
+                    ),
+                )
+                yield AgentEvent(type="done")
+                return
 
-        category = await self.router.classify(user_message)
+        category = await self.router.classify(user_message, model=self._api_model())
         self._run_category = category
         log.info("classified session=%s category=%s", sid, category)
         yield AgentEvent(type="status", content=f"category:{category}")
@@ -218,6 +221,7 @@ class Agent:
                     temperature=blend_temp,
                     repeat_penalty=self.repeat_penalty,
                     top_p=self.top_p,
+                    model=self._api_model(),
                 ):
                     if self._cancelled:
                         break
@@ -524,6 +528,7 @@ class Agent:
             ],
             max_tokens=max_tok,
             temperature=temp,
+            model=self._api_model(),
         )
         text = resp.get("content") or ""
         self.session.add_assistant(text)
@@ -602,7 +607,9 @@ class Agent:
                 try:
                     obj = json.loads(match.group(1))
                     name = obj.get("name", "")
-                    args = obj.get("arguments", {})
+                    args = obj.get("arguments")
+                    if not isinstance(args, dict):
+                        args = {k: v for k, v in obj.items() if k not in ("name", "arguments")}
                     if name and self.registry.get(name):
                         calls.append((name, args))
                 except (json.JSONDecodeError, KeyError):
@@ -612,9 +619,11 @@ class Agent:
         if not calls:
             for obj in self._extract_json_objects(text):
                 name = obj.get("name", "")
-                args = obj.get("arguments", {})
+                args = obj.get("arguments")
+                if not isinstance(args, dict):
+                    args = {k: v for k, v in obj.items() if k not in ("name", "arguments")}
                 if name and self.registry.get(name):
-                    calls.append((name, args if isinstance(args, dict) else {}))
+                    calls.append((name, args))
                     break
         if not calls:
             calls = self._extract_pseudo_xml_tool_calls(text)
@@ -650,7 +659,7 @@ class Agent:
                             block = text[idx : j + 1]
                             try:
                                 obj = json.loads(block)
-                                if isinstance(obj, dict) and "name" in obj and "arguments" in obj:
+                                if isinstance(obj, dict) and "name" in obj:
                                     objs.append(obj)
                             except Exception:
                                 pass
@@ -774,17 +783,41 @@ class Agent:
         return text
 
     def _requires_tool_call(self, message: str, category: str) -> bool:
-        if category in ("coding", "system", "ebs"):
-            return True
-        if category == "simple" and self._wants_web_tools(message):
-            return True
-        m = message.lower()
+        m = message.lower().strip()
+        
+        # Common greetings, simple feedback, or short chitchat should never force a tool call
+        chitchat = (
+            "hi", "hello", "hey", "thanks", "thank you", "ok", "ok.", "okay", "haan", "yes", "no", "nah", 
+            "greetings", "good morning", "good evening", "good afternoon", "bye", "goodbye"
+        )
+        if m in chitchat or len(m) < 15:
+            return False
+
+        # Capability/tool inquiries and conceptual questions should not force tool calls
+        capability_indicators = (
+            "capability", "capabilities", "can you do", "do you know how", "how to", 
+            "what is", "what are", "which tools", "what tools", "list your tools", "show your tools",
+            "do you have", "are you capable"
+        )
+        if any(ind in m for ind in capability_indicators):
+            return False
+
+        # Action keywords indicating the message requests an action that requires tools
         keywords = (
             "create", "build", "run", "execute", "fix", "deploy", "install",
             "verify", "check", "show", "list", "find", "read", "write", "edit",
             "mkdir", "touch", "git ", "commit", "push", "service", "systemctl",
+            "ssh", "tool", "bash", "command", "image", "generate", "logo", "design"
         )
-        return any(k in m for k in keywords)
+        has_keyword = any(k in m for k in keywords)
+
+        if category in ("coding", "system", "ebs"):
+            return has_keyword
+
+        if category == "simple" and self._wants_web_tools(message):
+            return True
+
+        return has_keyword
 
     def _force_tool_note(self, message: str, category: str) -> str:
         """Generate a forced tool note for file operations."""
@@ -878,6 +911,7 @@ class Agent:
                     ],
                     max_tokens=60,
                     temperature=0.1,
+                    model=self._api_model(),
                 ),
                 timeout=3.0,
             )

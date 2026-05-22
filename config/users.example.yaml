@@ -2,13 +2,16 @@
 # Do NOT commit users.yaml — it holds password_hash values.
 #
 # Hash = SHA256(plaintext_password).hexdigest()  e.g. python3 -c "import hashlib; print(hashlib.sha256(b'YOUR_PW').hexdigest())"
+#
+# "models" = OpenRouter API model ids (same as request body "model"), e.g. minimax/minimax-m2.5:free
+# Use ["*"] to use names from config.yaml for all roles (main/fast/opus). First listed id wins if several.
 
 groups:
   admin:
     models: ["*"]
     tools: ["*"]
   readonly:
-    models: ["openrouter/free"]
+    models: ["minimax/minimax-m2.5:free"]
     tools:
       - bash
       - read_file
