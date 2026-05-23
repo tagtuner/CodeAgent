@@ -6,6 +6,7 @@ from .oracle import OracleQueryTool, OracleSchemaTool, SqlValidateTool, OracleEx
 from .ebs import EBSModuleGuideTool, EBSConcurrentStatusTool
 from .ssh_remote import SSHRemoteTool
 from .image_gen import ImageGenTool
+from .analyze_image import AnalyzeImageTool
 
 __all__ = [
     "BaseTool", "ToolRegistry",
@@ -16,4 +17,5 @@ __all__ = [
     "EBSModuleGuideTool", "EBSConcurrentStatusTool",
     "SSHRemoteTool",
     "ImageGenTool",
+    "AnalyzeImageTool",
 ]

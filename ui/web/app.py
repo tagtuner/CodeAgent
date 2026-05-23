@@ -309,16 +309,24 @@ def _triggered_skills_context(config: Config, user_message: str, max_chars: int 
     return "\n".join(parts)
 
 
-def _augment_user_message_with_attachments(user_text: str, attachments: list[dict]) -> str:
+def _augment_user_message_with_attachments(
+    config: Config, session_id: str, user_text: str, attachments: list[dict]
+) -> str:
     if not attachments:
         return user_text
+    ws = _workspace_for_session(config, session_id).resolve()
     lines = [
-        "[User attached files — already saved in this chat's workspace. "
-        "Bash workers run under .../wN; use WS=\"$(dirname \"$PWD\")\" for workspace root. "
-        "Use identify/file/ls on images — do not read_file on binary images.]",
+        "[User attached files — already saved under this chat's workspace. "
+        "To summarize, caption, OCR, or write titles/listings **from pixels**, "
+        "call **`analyze_image`** with the printed absolute paths and your question "
+        "(do NOT use bash, identify, ImageMagick, or read_file on these binaries).]",
     ]
     for a in attachments:
-        lines.append(f"- {a['path']} (original: {a.get('name', '')})")
+        rel = str(a.get("path", "")).strip()
+        abs_path = (ws / rel).resolve().as_posix() if rel else ""
+        lines.append(
+            f"- Absolute path for analyze_image: {abs_path} (relative workspace: {rel}, original filename: {a.get('name', '')})"
+        )
     lines.append("")
     lines.append(user_text.strip())
     return "\n".join(lines)
@@ -869,7 +877,7 @@ def create_app(
                         "Use the uploaded files in this workspace and complete the design task "
                         "(variants, patterns, or edits as appropriate)."
                     )
-                user_text = _augment_user_message_with_attachments(user_text, validated)
+                user_text = _augment_user_message_with_attachments(config, session_id, user_text, validated)
 
                 agent._cancelled = False
                 agent.approval_queue = asyncio.Queue()

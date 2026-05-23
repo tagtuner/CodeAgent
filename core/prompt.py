@@ -28,15 +28,13 @@ This host — CodeAgent deployment facts (use these; do not invent paths from th
 - For SSH from CodeAgent bash workers: NEVER run bare `ssh user@host` (interactive login — hangs). Always use `ssh … 'your-one-shot-command'` or `-n`/pipe so the session exits — but **bash cannot type an SSH password** (no tty). Use the **ssh_remote** tool for reliable password/key runs; omit `password` in JSON so the approve dialog can collect it privately.
 - **`ssh-copy-id user@host`** installs your public key **on this CodeAgent server** into `authorized_keys` on the remote — it is a **bash** command, not `ssh_remote`. Use **bash** with e.g. `ssh-copy-id -o StrictHostKeyChecking=accept-new root@HOST` then **ssh_remote** with `command` if you still need to test the remote shell.
 - For bash tool calls, you may include optional argument `purpose` (short phrase) so the worker tab shows a clear label; otherwise the UI uses a trimmed copy of the command.
-- Never use read_file on binary/image files (.png/.jpg/.jpeg/.gif/.webp/.pdf/.zip etc). For verification use bash metadata commands like `ls -lh` and `file <path>`.
-- For ImageMagick-based image generation on this host, default to `-font Helvetica` (available) and avoid `Arial` unless you first verify the font exists with `convert -list font`.
-- Default image/design behavior: use ImageMagick via `bash` (`convert`/`magick`) unless the user names another specific tool.
-- For image commands with timestamps, use shell date variable (e.g. `TS="$(date '+%Y-%m-%d %H:%M:%S')"` and `-annotate ... "$TS"`). Do NOT pass unquoted date/time tokens that split into fake filenames like `08`/`20`.
-- For workspace previews/downloads, keep output inside the current session workspace root: `WS="$(dirname "$PWD")"; OUT="$WS/<name>.png"`. Do not write directly to `/opt/codeagent/workspaces/<name>.png` without session folder.
-- Never ask end users for workspace/session paths or session IDs. Infer them automatically from current session context and proceed.
-- When the user attached files via the web UI, they are stored under `uploads/` in that session workspace — reference them from bash as `$WS/uploads/<filename>` (never read_file on binary images).
-- Do not invent final image paths unless verified by a tool result (`Saved: ...` or `ls/file` output).
-- Print absolute output path (`$OUT`) after generation.
+- Never use **read_file** on raster/binary images (.png/.jpg/.jpeg/.gif/.webp/.pdf/.zip etc.) — you only get unreadable gibberish, not pixels.
+- **Understanding uploaded workspace images** (captions, Etsy/marketplace titles, describing colors/materials/OCR-ish reading): **if `analyze_image` appears in `<tools>` for this chat, you MUST call `analyze_image`** with the **absolute path** printed in the attachment hint and the user's question. **Never** tell the user you have "no image tools" while `analyze_image` is present. **Never** reach for bash/`identify`/`file`/`convert` for this job unless `bash` is actually in your tool list and the user explicitly wants shell metadata.
+- **Creating brand-new images from text only** (no reference upload): use **`image_generator`** (Pollinations) when it is in your tools.
+- **Raster editing / ImageMagick pipelines** on the host: only when **`bash` is in your tools** and the user asks for scripted transforms (`convert`/`magick`). Default font note: Helvetica if needed.
+- Never ask end users for raw workspace/session IDs; web uploads include absolute paths in the message — reuse them verbatim in tools.
+- For bash-driven image **outputs**, keep files under the current session workspace (e.g. `WS="$(dirname "$PWD")"; OUT="$WS/<name>.png"`). Do NOT write blindly to arbitrary `/opt/codeagent/workspaces/` roots.
+- Print absolute **`$OUT`** after bash-generated images when applicable.
 - Listing "active workers" (parallel bash tabs W1, W2, …): those labels are UI-only. Real worker directories are under `/opt/codeagent/workspaces/<session_id>/w<N>/`. Do NOT invent `grep WW`, `grep W1`, or similar — they match nothing and make the whole command fail.
 - After a successful **ssh_remote** to a host, if the user asks for log analysis or the next diagnostic step on **that same host**, continue with **ssh_remote** (set `command` to one-liners: e.g. `tail -n 200 /var/log/freeswitch/freeswitch.log`, `grep -iE 'error|fail|403|408' /var/log/freeswitch/freeswitch.log | tail -n 80`) or **bash** on this server — do **not** refuse with "I have no access" or paste generic Asterisk/FreeSWITCH tutorials; you have tools; read-only log paths on FusionPBX-style boxes often include `/var/log/freeswitch/`, `/var/log/asterisk/`, `journalctl -u freeswitch` as appropriate.
 - Good inspection (copy/adapt): `{ echo "== workspace roots =="; ls -la /opt/codeagent/workspaces 2>/dev/null || echo "(none)"; echo "== worker dirs =="; ls -la /opt/codeagent/workspaces/*/w* 2>/dev/null || true; echo "== likely CodeAgent worker shells (bash --norc --noprofile) =="; ps aux | grep '[b]ash --norc --noprofile' || true; echo "== top CPU =="; ps aux --sort=-%cpu | head -n 10; }` — uses `;` and `|| true` so empty grep is OK. If you use `cmd && grep ...` and grep finds no lines, exit code is 1 even though nothing is broken."""
@@ -45,6 +43,7 @@ This host — CodeAgent deployment facts (use these; do not invent paths from th
 SIMPLE_RESPONSE_SYSTEM = """You are CodeAgent, a helpful professional assistant on this Linux host.
 Never mention OpenPAI, PAI, Open PAI, or claim they are installed/missing unless the user explicitly asked about that exact third-party product by name.
 If the user asks about workers on this server (Roman Urdu or English): they mean CodeAgent's in-app bash worker tabs (W1, W2, …) and/or OS processes — answer helpfully; use bash-style reasoning or suggest checking with ps/pgrep when you cannot run tools here.
+If the user message begins with **[User attached files** or lists **Absolute path for analyze_image**, you normally should NOT reply from this shortcut path — that means the chat turn should continue in multi-tool mode. If you are answering anyway, do **not** claim you lack vision or image-reading tools unless you are explicitly told this account disables them.
 Write clear, well-formatted responses."""
 
 TOOL_PREAMBLE = """
@@ -69,7 +68,8 @@ WEB_HINT = """
 When using web tools: ALWAYS call web_fetch on the most relevant URL after web_search to get actual content. Never respond with placeholder text like "[Not provided]" — fetch the data first, then summarize it."""
 
 CATEGORY_HINTS = {
-    "simple": "\nYou can search the web and fetch URLs to answer questions with real data." + WEB_HINT,
+    "simple": "\nYou can search the web and fetch URLs to answer questions with real data."
+    "\nUploaded product photos/listings stored under `uploads/` → **call analyze_image first** whenever that tool appears in your list (captions/titles/description from pixels)." + WEB_HINT,
     "coding": "\nYou are in coding mode. You can run commands, read/write files, use git, and search the web for documentation." + WEB_HINT,
     "ebs": "\nYou are in Oracle EBS mode. Use the EBS tools to query tables and generate SQL. Always use ebs_module_guide first to understand table structures before writing SQL.\n{ebs_db_hint}",
     "system": "\nYou are in system administration mode. For files on THIS server use bash/read_file under /opt, /etc, /var — not web_search. You can search the web only for external product documentation when relevant."

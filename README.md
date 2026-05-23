@@ -195,7 +195,8 @@ CodeAgent/
 │   ├── oracle.py            # Oracle DB query/schema/validate/explain
 │   ├── ssh_remote.py        # One-shot remote SSH helper
 │   ├── web_search.py        # Web tools
-│   ├── image_gen.py         # Pollinations image generation (Flux Schnell)
+│   ├── image_gen.py         # Pollinations text → image (Flux Schnell)
+│   ├── analyze_image.py     # Vision Q&A on workspace uploads via OpenRouter
 │   └── ebs.py               # Oracle EBS module knowledge guide
 ├── mcp/                     # Model Context Protocol client
 │   ├── client.py            # MCP protocol (stdio + SSE transport)
@@ -326,6 +327,8 @@ tools:
 ```
 
 **Docs:** procedural walkthrough `docs/WALKTHROUGH_POLLINATIONS_IMAGE.md` · stable context snapshot `docs/LONG_TERM_MEMORY_CODEAGENT_POLLINATIONS.md`.
+
+**Uploaded image questions (`analyze_image`):** Web composer attachments land under `<workspace>/uploads/`. The model should call **`analyze_image`** with the absolute path printed in attachment hints plus the user’s question — OpenRouter multimodal (configure optional `tools.analyze_image.model` for a vision-capable id). Not img2img / not edits.
 
 ## Recommended Models
 

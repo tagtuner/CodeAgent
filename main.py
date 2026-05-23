@@ -26,6 +26,7 @@ from tools.ebs import EBSModuleGuideTool, EBSConcurrentStatusTool
 from tools.ssh_remote import SSHRemoteTool
 from tools.web_search import WebSearchTool, WebFetchTool
 from tools.image_gen import ImageGenTool
+from tools.analyze_image import AnalyzeImageTool
 from mcp.client import MCPClient
 from mcp.registry import MCPRegistry
 from skills.manager import SkillManager
@@ -78,6 +79,9 @@ def build_registry(config: Config) -> ToolRegistry:
 
     # Always register image generator
     registry.register(ImageGenTool())
+
+    if tool_cfg.get("analyze_image", {}).get("enabled", True):
+        registry.register(AnalyzeImageTool())
 
     return registry
 

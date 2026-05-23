@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
@@ -14,6 +15,7 @@ from core.session import Session
 from core.router import Router
 from core.bash_validate import ssh_interactive_only_message
 from core.worker import WorkerPool
+from core.request_context import SESSION_WORKSPACE
 from tools.base import ToolRegistry
 
 TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
@@ -114,6 +116,8 @@ class Agent:
         sid = getattr(self.session, "id", "unknown")
         log.info("run start session=%s msg='%s'", sid, user_message.replace("\n", " ")[:180])
 
+        SESSION_WORKSPACE.set(Path(self._session_workspace_root()))
+
         if self.allowed_model_names is not None:
             mid = self.session_model_id
             if not mid or mid not in self.allowed_model_names:
@@ -140,6 +144,18 @@ class Agent:
                     tool_names.append(t)
         if self.allowed_tool_names is not None:
             tool_names = [t for t in tool_names if t in self.allowed_tool_names]
+
+        # Restricted presets sometimes leave ONLY web_* tools; uploads still need vision.
+        if self._message_has_workspace_upload_block(user_message) and self.registry.get(
+            "analyze_image"
+        ):
+            ok = (
+                self.allowed_tool_names is None
+                or "analyze_image" in self.allowed_tool_names
+            )
+            if ok and "analyze_image" not in tool_names:
+                tool_names = ["analyze_image"] + tool_names
+
         log.info("tools active session=%s count=%s", sid, len(tool_names))
 
         if not tool_names:
@@ -147,10 +163,12 @@ class Agent:
                 yield event
             return
 
-        if category == "simple" and not self._wants_web_tools(user_message):
-            async for event in self._simple_response(user_message):
-                yield event
-            return
+        if category == "simple":
+            wanalyze = "analyze_image" in tool_names and self._wants_image_analysis(user_message)
+            if not self._wants_web_tools(user_message) and not wanalyze:
+                async for event in self._simple_response(user_message):
+                    yield event
+                return
 
         # Only web_search/web_fetch left (typical restricted user) but message is not a web lookup:
         # do not enter tool loop — require_tool_call would otherwise force a bogus search.
@@ -172,15 +190,30 @@ class Agent:
                 "You may ONLY use <tool_call> for tools in this exact set: "
                 f"{allow_txt}. "
                 "Never output a tool_call for SSH, bash, remote servers, or any name not in that set — "
-                "even if the user asks; explain you only have the listed tools."
+                "even if the user asks; explain you only have the listed tools. "
+                "For questions about uploaded images (titles, listings, OCR, captions), "
+                "**use analyze_image with the workspace absolute paths** supplied in attachment hints "
+                "(never ImageMagick/bash/identify for pixel inspection)."
             )
 
         if category == "ebs" and self.llm_opus:
             llm = self.llm_opus
         else:
             llm = self.llm_main
-        force_tool_note = self._force_tool_note(user_message, category)
-        require_tool_call = self._requires_tool_call(user_message, category)
+        want_vision = ("analyze_image" in prompt_tool_names) and self._message_has_workspace_upload_block(user_message)
+        vision_nudge = ""
+        if want_vision:
+            vision_nudge = (
+                "CRITICAL: The user message includes a workspace upload. Emit **exactly one** tool call in this format "
+                "(no extra paragraphs before/after): "
+                '<tool_call>{"name":"analyze_image","arguments":{"path":"PASTE_ABSOLUTE_PATH_FROM_HINT",'
+                '"prompt":"RESTATE_USER_REQUEST"}}</tool_call> '
+                "Set `path` to the full path from the line that begins `Absolute path for analyze_image:` "
+                "(verbatim). Set `prompt` to what they want (e.g. Etsy title). "
+                "Do not refuse; do not suggest bash/file/identify for seeing the picture."
+            )
+        force_tool_note = vision_nudge or self._force_tool_note(user_message, category)
+        require_tool_call = self._requires_tool_call(user_message, category, prompt_tool_names)
         image_task = self._is_image_task(user_message)
         stream_text = True
         tool_retry_count = 0
@@ -210,9 +243,11 @@ class Agent:
             llm_stats = None
             max_tokens = None
             if require_tool_call:
-                # Fast tool-call planning: avoid long prose generations.
                 llm_cap = int(getattr(llm, "max_output", 4096) or 4096)
-                max_tokens = max(192, min(900, llm_cap))
+                if want_vision:
+                    max_tokens = max(512, min(2500, llm_cap))
+                else:
+                    max_tokens = max(192, min(900, llm_cap))
             blend_temp = float(self.temperature)
             try:
                 async for chunk in llm.stream_chat(
@@ -272,11 +307,14 @@ class Agent:
                                 f"Generating actionable tool call... retry {tool_retry_count}/{max_tc_retries}"
                             ),
                         )
-                        force_tool_note = (
-                            "You MUST call at least one real tool now. "
-                            "Do not output prose, plans, or fake command snippets. "
-                            "Return exactly one valid <tool_call>{...}</tool_call> for the next concrete step."
-                        )
+                        if want_vision:
+                            force_tool_note = vision_nudge
+                        else:
+                            force_tool_note = (
+                                "You MUST call at least one real tool now. "
+                                "Do not output prose, plans, or fake command snippets. "
+                                "Return exactly one valid <tool_call>{...}</tool_call> for the next concrete step."
+                            )
                         continue
                     yield AgentEvent(
                         type="error",
@@ -343,7 +381,7 @@ class Agent:
                         continue
 
                     # Read-only web tools: no secrets; waiting on approval makes weather/search feel "stuck".
-                    approved = tc_name in ("web_search", "web_fetch")
+                    approved = tc_name in ("web_search", "web_fetch", "analyze_image")
                     approval_patch: dict[str, Any] = {}
                     if not approved:
                         yield AgentEvent(
@@ -548,6 +586,21 @@ class Agent:
         )
         return any(k in m for k in keys)
 
+    def _wants_image_analysis(self, message: str) -> bool:
+        m = message.lower()
+        needles = (
+            "[user attached files",
+            "absolute path for analyze_image",
+            "absolute path:",
+            "/uploads/",
+            " uploads/",
+            "uploads/",
+            ".jpg", ".jpeg", ".png", ".webp",
+            "upload", "attached", "etsy", "listing", "product title",
+            "caption", "describe this", "what is this", "picture", "photo", "thumbnail",
+        )
+        return any(x in m for x in needles)
+
     def _select_mcp_tools_for_message(self, message: str) -> list[str]:
         """Registered MCP tools (Blender MCP removed from this product build)."""
         _ = message
@@ -670,7 +723,7 @@ class Agent:
         return objs
 
     def _fix_placeholder_paths(self, tool_name: str, args: dict) -> dict:
-        if tool_name not in ("read_file", "edit_file", "write_file"):
+        if tool_name not in ("read_file", "edit_file", "write_file", "analyze_image"):
             return args
         path = args.get("path") or args.get("file_path") or ""
         if not path or ("<" not in path and ">" not in path):
@@ -782,9 +835,19 @@ class Agent:
             return f"\n\n[Auto-created files: {', '.join(written_files)}]"
         return text
 
-    def _requires_tool_call(self, message: str, category: str) -> bool:
+    def _message_has_workspace_upload_block(self, message: str) -> bool:
+        """True when the Web UI injected its attachment prelude (analyze_image anchors)."""
+        m = (message or "").lower()
+        return ("[user attached files" in m) or ("absolute path for analyze_image:" in m)
+
+    def _requires_tool_call(self, message: str, category: str, tool_names: list[str] | None = None) -> bool:
         m = message.lower().strip()
-        
+        tn = tool_names if tool_names is not None else []
+
+        # Uploaded workspace images MUST go through analyze_image first (never "I can't see images").
+        if "analyze_image" in tn and self._message_has_workspace_upload_block(message):
+            return True
+
         # Common greetings, simple feedback, or short chitchat should never force a tool call
         chitchat = (
             "hi", "hello", "hey", "thanks", "thank you", "ok", "ok.", "okay", "haan", "yes", "no", "nah", 

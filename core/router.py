@@ -3,7 +3,7 @@ import re
 from .llm import LLMClient
 
 TOOL_MAP: dict[str, list[str]] = {
-    "simple": ["web_search", "web_fetch"],
+    "simple": ["web_search", "web_fetch", "analyze_image"],
     "coding": [
         "bash",
         "ssh_remote",
@@ -14,6 +14,7 @@ TOOL_MAP: dict[str, list[str]] = {
         "web_search",
         "web_fetch",
         "image_generator",
+        "analyze_image",
     ],
     "ebs": ["bash", "ebs_module_guide", "ebs_concurrent_status", "oracle_query", "oracle_schema", "sql_validate", "oracle_explain", "web_search"],
     "system": [
@@ -34,7 +35,7 @@ Classify the user message into exactly one category. Reply with ONLY the categor
 
 Categories:
 - simple: greetings, general questions, explanations, web searches, looking up information
-- coding: writing code, scripts, files, debugging, programming tasks; design/image work including uploaded attachments (patterns, variants, ImageMagick)
+- coding: writing code, scripts, files, debugging, programming tasks; text-to-image generation; answering questions about **uploaded photos** (use analyze_image tool, not shell/ImageMagick)
 - ebs: Oracle EBS, SQL queries, database tables, PO/AP/AR/GL/INV modules, suppliers, invoices
 - system: server administration, git, services, disk, network, system commands; VoIP/SIP (Asterisk/FreeSWITCH/FusionPBX), trunk/outgoing call **log** analysis; also workers/processes on THIS server (often CodeAgent bash worker tabs W1, W2, …, not OpenPAI/Kubernetes unless user names them)
 
@@ -100,6 +101,15 @@ class Router:
 
     def _keyword_classify(self, message: str) -> str | None:
         msg_lower = message.lower().strip()
+
+        # Web UI injects attachment blocks into the user's text. Those often contain words that
+        # otherwise match trivial "simple" chat ("describe...", "tell me...", "explain...").
+        # Force coding so we keep the rich tool preamble and avoid _simple_response for uploads.
+        if (
+            "[user attached files" in msg_lower
+            or "absolute path for analyze_image:" in msg_lower
+        ):
+            return "coding"
 
         # Explicit tool invocation style should never route to simple.
         if "tool_call" in msg_lower:

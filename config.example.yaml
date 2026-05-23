@@ -79,6 +79,13 @@ tools:
     # Optional override; Pollinations Bearer key reads POLLINATIONS_API_KEY first anyway.
     api_key: ${POLLINATIONS_API_KEY}
     base_url: https://gen.pollinations.ai
+  analyze_image:
+    enabled: true
+    # Optional OpenRouter vision-capable model id; blank inherits models.main.name
+    model: ""
+    prefer: main  # "main" or "fast" — which slot supplies API URL + key template
+    max_bytes: 12582912
+    timeout: 120
 
 skills_dir: /opt/codeagent/skills/library
 

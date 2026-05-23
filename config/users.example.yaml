@@ -20,6 +20,16 @@ groups:
       - glob_search
       - web_search
       - web_fetch
+  marketer:
+    models: ["z-ai/glm-4.5-air:free"]
+    tools:
+      - analyze_image
+      - image_generator
+      - read_file
+      - write_file
+      - edit_file
+      - web_search
+      - web_fetch
 
 users:
   - username: admin
